@@ -11,9 +11,7 @@
 #     ./install-aichat                 # Auto-detects latest version (interactive)
 #     ./install-aichat latest          # Uses latest version
 #     ./install-aichat 0.30.0          # Uses specific version
-#     AICHAT_VERSION=latest curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/insfi
-if [[ -n "$GEN_ROLE_SCRIPT" && -f "$GEN_ROLE_SCRIPT" ]]; then
-    echo "🔧 Installing gen-aichat-role script..."l-aichat | bash
+#     AICHAT_VERSION=latest curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
 #     curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash  # Auto-detects latest
 #
 #  The script automatically asks for sudo when needed.
@@ -444,7 +442,6 @@ if [[ $# -eq 0 ]]; then
             fi
         fi
     fi
-fi
 else
     if [[ "$1" == "latest" ]]; then
         if VERSION=$(get_latest_version); then
