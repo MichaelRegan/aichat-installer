@@ -3,14 +3,16 @@
 #  Download and install aichat from GitHub releases
 #
 #  Usage:
-#     ./install-aichat <version>
-#     AICHAT_VERSION=<version> ./install-aichat
-#     AICHAT_VERSION=<version> curl -fsSL <url> | bash
+#     ./install-aichat [version|latest]
+#     AICHAT_VERSION=[version|latest] ./install-aichat
+#     AICHAT_VERSION=[version|latest] curl -fsSL <url> | bash
 #
 #  Examples:
-#     ./install-aichat 0.30.0
-#     AICHAT_VERSION=0.30.0 ./install-aichat
-#     AICHAT_VERSION=0.30.0 curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
+#     ./install-aichat                 # Auto-detects latest version (interactive)
+#     ./install-aichat latest          # Uses latest version
+#     ./install-aichat 0.30.0          # Uses specific version
+#     AICHAT_VERSION=latest curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
+#     curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash  # Auto-detects latest
 #
 #  The script automatically asks for sudo when needed.
 
@@ -50,6 +52,29 @@ detect_architecture() {
             return 1
             ;;
     esac
+}
+
+# Get latest release version from GitHub API
+get_latest_version() {
+    echo "🔍 Fetching latest aichat release..."
+    local latest_url="https://api.github.com/repos/sigoden/aichat/releases/latest"
+    local version
+    
+    # Try to get version from GitHub API
+    if command -v curl >/dev/null 2>&1; then
+        version=$(curl -fsSL "$latest_url" | grep '"tag_name":' | sed -E 's/.*"tag_name": *"v?([^"]+)".*/\1/' 2>/dev/null)
+    elif command -v wget >/dev/null 2>&1; then
+        version=$(wget -qO- "$latest_url" | grep '"tag_name":' | sed -E 's/.*"tag_name": *"v?([^"]+)".*/\1/' 2>/dev/null)
+    fi
+    
+    # Validate the version format
+    if [[ -n "$version" ]] && validate_version "$version"; then
+        echo "$version"
+        return 0
+    else
+        echo "❌ Failed to fetch latest version from GitHub API"
+        return 1
+    fi
 }
 
 # Check if aichat is already installed
@@ -376,19 +401,47 @@ test_completions() {
 if [[ $# -eq 0 ]]; then
     # Check for environment variable first (useful for piped installs)
     if [[ -n "${AICHAT_VERSION:-}" ]]; then
-        VERSION="$AICHAT_VERSION"
-        echo "Using version from AICHAT_VERSION: $VERSION"
+        if [[ "${AICHAT_VERSION}" == "latest" ]]; then
+            if VERSION=$(get_latest_version); then
+                echo "✅ Using latest version: $VERSION"
+            else
+                echo "❌ Failed to fetch latest version"
+                exit 1
+            fi
+        else
+            VERSION="$AICHAT_VERSION"
+            echo "Using version from AICHAT_VERSION: $VERSION"
+        fi
     else
-        echo "Enter the aichat release version (e.g. 0.24.25):"
-        read -r VERSION
-        if [[ -z $VERSION ]]; then
-            echo "❌ No version supplied."
-            echo "💡 Tip: For non-interactive installs, use: AICHAT_VERSION=0.30.0 curl ... | bash"
-            exit 1
+        # Try to get latest version automatically
+        if VERSION=$(get_latest_version); then
+            echo "✅ Auto-detected latest version: $VERSION"
+            echo "Press Enter to install $VERSION, or specify a different version:"
+            read -r user_input
+            if [[ -n "$user_input" ]]; then
+                VERSION="$user_input"
+            fi
+        else
+            echo "Enter the aichat release version (e.g. 0.30.0):"
+            read -r VERSION
+            if [[ -z $VERSION ]]; then
+                echo "❌ No version supplied."
+                echo "💡 Tip: For non-interactive installs, use: curl ... | bash (auto-detects latest)"
+                exit 1
+            fi
         fi
     fi
 else
-    VERSION="$1"
+    if [[ "$1" == "latest" ]]; then
+        if VERSION=$(get_latest_version); then
+            echo "✅ Using latest version: $VERSION"
+        else
+            echo "❌ Failed to fetch latest version"
+            exit 1
+        fi
+    else
+        VERSION="$1"
+    fi
 fi
 
 # Validate version format
