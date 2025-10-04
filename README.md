@@ -336,8 +336,21 @@ This installation script is provided under the MIT License. See LICENSE file for
 - [llm-functions](https://github.com/sigoden/llm-functions) - Function calling tools
 - [Ollama](https://ollama.ai/) - Local LLM runtime
 
-## 📖 Additional Resources
+## � Project Structure
 
+This repository is organized into the following directories:
+
+- **`install-aichat`** - Main installation script (start here!)
+- **`scripts/`** - Utility scripts (`gen-aichat-role`, `verify-installation.sh`)
+- **`docs/`** - Documentation ([Quick Reference](docs/QUICK_REFERENCE.md), [Changelog](docs/CHANGELOG.md))
+- **`tests/`** - Comprehensive test suite for development
+
+See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for detailed information.
+
+## �📖 Additional Resources
+
+- [Quick Reference Card](docs/QUICK_REFERENCE.md) - Essential commands and shortcuts
+- [Changelog](docs/CHANGELOG.md) - Version history and features
 - [aichat Documentation](https://github.com/sigoden/aichat/wiki)
 - [OpenAI API Reference](https://platform.openai.com/docs)
 - [Shell Integration Guide](https://github.com/sigoden/aichat/wiki/Shell-Integration)

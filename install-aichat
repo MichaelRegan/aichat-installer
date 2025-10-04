@@ -11,7 +11,9 @@
 #     ./install-aichat                 # Auto-detects latest version (interactive)
 #     ./install-aichat latest          # Uses latest version
 #     ./install-aichat 0.30.0          # Uses specific version
-#     AICHAT_VERSION=latest curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
+#     AICHAT_VERSION=latest curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/insfi
+if [[ -n "$GEN_ROLE_SCRIPT" && -f "$GEN_ROLE_SCRIPT" ]]; then
+    echo "🔧 Installing gen-aichat-role script..."l-aichat | bash
 #     curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash  # Auto-detects latest
 #
 #  The script automatically asks for sudo when needed.
@@ -585,8 +587,15 @@ fi
 # ------------------------------------------------------------------
 # 6.5. Install gen-aichat-role script and create wrapper
 # ------------------------------------------------------------------
-# Check if gen-aichat-role script exists in current directory
-GEN_ROLE_SCRIPT="$(dirname "$0")/gen-aichat-role"
+# Check if gen-aichat-role script exists (try both current dir and scripts subdir)
+SCRIPT_DIR="$(dirname "$0")"
+if [[ -f "$SCRIPT_DIR/gen-aichat-role" ]]; then
+    GEN_ROLE_SCRIPT="$SCRIPT_DIR/gen-aichat-role"
+elif [[ -f "$SCRIPT_DIR/scripts/gen-aichat-role" ]]; then
+    GEN_ROLE_SCRIPT="$SCRIPT_DIR/scripts/gen-aichat-role"
+else
+    GEN_ROLE_SCRIPT=""
+fi
 if [[ -f "$GEN_ROLE_SCRIPT" ]]; then
     echo "� Installing gen-aichat-role script..."
     

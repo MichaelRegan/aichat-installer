@@ -1,0 +1,38 @@
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+
+# Test artifacts
+/tmp/aichat-*test*
+/tmp/config-only-test*
+/tmp/final-test*
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.nfs*
+
+# Editor files
+.vscode/
+.idea/
+*.sublime-*
+
+# Log files
+*.log
+
+# Backup files
+*.orig
+*.backup
+
+# Distribution files
+*.tar.gz
+*.zip
+*.deb
+*.rpm
