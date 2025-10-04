@@ -444,6 +444,7 @@ if [[ $# -eq 0 ]]; then
             fi
         fi
     fi
+fi
 else
     if [[ "$1" == "latest" ]]; then
         if VERSION=$(get_latest_version); then
@@ -906,3 +907,6 @@ if [[ "$SKIP_BINARY_INSTALL" == "false" ]]; then
     fi
 fi
 echo "   Run 'aichat --help' to see available options."
+
+echo ""
+echo "🎉 Installation complete! Happy AI-assisted command line usage!"
