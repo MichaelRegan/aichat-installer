@@ -1,0 +1,824 @@
+#!/usr/bin/env bash
+#  aichat-install.sh
+#  Download and install aichat from GitHub releases
+#
+#  Usage:
+#     ./aichat-install.sh <version>
+#
+#  Example:
+#     ./aichat-install.sh 0.24.25
+#
+#  The script automatically asks for sudo when needed.
+
+set -euo pipefail
+IFS=$'\n\t'  # make read -r safer; useful for filenames with spaces
+
+# ------------------------------------------------------------------
+# Helper functions
+# ------------------------------------------------------------------
+
+# Validate version format (basic semver pattern)
+validate_version() {
+    local version="$1"
+    if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "❌ Invalid version format. Expected format: X.Y.Z (e.g., 0.24.25)"
+        return 1
+    fi
+    return 0
+}
+
+# Detect system architecture
+detect_architecture() {
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64)
+            echo "linux-x86_64"
+            ;;
+        aarch64|arm64)
+            echo "linux-aarch64"
+            ;;
+        armv7l)
+            echo "linux-armv7"
+            ;;
+        *)
+            echo "❌ Unsupported architecture: $arch"
+            return 1
+            ;;
+    esac
+}
+
+# Check if aichat is already installed
+check_existing_installation() {
+    if command -v aichat >/dev/null 2>&1; then
+        local current_version
+        current_version=$(aichat --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+        echo "ⓘ aichat is already installed (version: $current_version)"
+        echo "Do you want to continue with installation/update? (y/N):"
+        read -r response
+        if [[ ! $response =~ ^[Yy]$ ]]; then
+            echo "ⓘ Skipping binary installation/update."
+            SKIP_BINARY_INSTALL=true
+            return 0
+        fi
+    fi
+    SKIP_BINARY_INSTALL=false
+}
+
+# Detect current shell
+detect_shell() {
+    # First try to detect the actual running shell process
+    local current_shell
+    current_shell=$(ps -p $$ -o comm= 2>/dev/null | tr -d '-')
+    
+    if [[ -n "$current_shell" && "$current_shell" != "unknown" ]]; then
+        echo "$current_shell"
+    elif [[ -n "${SHELL:-}" ]]; then
+        # Fallback to SHELL environment variable
+        basename "$SHELL"
+    else
+        echo "unknown"
+    fi
+}
+
+# Install shell integration
+install_shell_integration() {
+    local shell_type="$1"
+    local integration_url="https://raw.githubusercontent.com/sigoden/aichat/refs/heads/main/scripts/shell-integration/integration.$shell_type"
+    
+    echo "🔗 Installing shell integration for $shell_type..."
+    
+    # Download integration script
+    local integration_content
+    if ! integration_content=$(curl -fsSL "$integration_url"); then
+        echo "⚠️  Failed to download shell integration for $shell_type"
+        return 1
+    fi
+    
+    # Determine config file location
+    local config_file
+    case "$shell_type" in
+        bash)
+            config_file="$HOME/.bashrc"
+            ;;
+        zsh)
+            config_file="$HOME/.zshrc"
+            ;;
+        fish)
+            config_file="$HOME/.config/fish/config.fish"
+            # Create fish config directory if it doesn't exist
+            mkdir -p "$(dirname "$config_file")"
+            ;;
+        *)
+            echo "⚠️  Unsupported shell for integration: $shell_type"
+            return 1
+            ;;
+    esac
+    
+    # Check if integration is already installed
+    if [[ -f "$config_file" ]] && grep -q "aichat.*integration\|_aichat_" "$config_file" 2>/dev/null; then
+        echo "ⓘ Shell integration appears to already be installed in $config_file"
+        echo "Do you want to reinstall it? (y/N):"
+        read -r response
+        if [[ ! $response =~ ^[Yy]$ ]]; then
+            return 0
+        fi
+        # Remove existing integration
+        if command -v sed >/dev/null 2>&1; then
+            # Create backup
+            cp "$config_file" "$config_file.backup.$(date +%s)"
+            # Remove existing aichat integration lines
+            sed -i '/# aichat shell integration/,/^$/d' "$config_file" 2>/dev/null || true
+            sed -i '/_aichat_/d' "$config_file" 2>/dev/null || true
+            sed -i '/bind.*aichat/d' "$config_file" 2>/dev/null || true
+            sed -i '/bindkey.*aichat/d' "$config_file" 2>/dev/null || true
+        fi
+    fi
+    
+    # Add integration to config file
+    {
+        echo ""
+        echo "# aichat shell integration (installed $(date))"
+        echo "$integration_content"
+        echo ""
+    } >> "$config_file"
+    
+    echo "✅ Shell integration installed in $config_file"
+    echo "   Press Alt+E (or Esc+E) in your terminal to enhance commands with AI"
+    echo "   Restart your shell or run 'source $config_file' to activate"
+    
+    return 0
+}
+
+# Ensure aichat configuration directories exist
+ensure_aichat_config_dirs() {
+    local config_dir="$HOME/.config/aichat"
+    local roles_dir="$config_dir/roles"
+    
+    echo "📁 Ensuring aichat configuration directories exist..."
+    
+    if [[ ! -d "$config_dir" ]]; then
+        echo "   Creating config directory: $config_dir"
+        mkdir -p "$config_dir" || {
+            echo "⚠️  Failed to create aichat config directory"
+            return 1
+        }
+    fi
+    
+    if [[ ! -d "$roles_dir" ]]; then
+        echo "   Creating roles directory: $roles_dir"
+        mkdir -p "$roles_dir" || {
+            echo "⚠️  Failed to create aichat roles directory"
+            return 1
+        }
+    fi
+    
+    # Set appropriate permissions
+    chmod 755 "$config_dir"
+    chmod 755 "$roles_dir"
+    
+    echo "✅ aichat configuration directories ready"
+    return 0
+}
+
+# Configure aichat to use local role by default
+configure_local_role_default() {
+    local config_file="$HOME/.config/aichat/config.yaml"
+    
+    echo "⚙️  Configuring aichat to use local role by default..."
+    
+    # Create config file if it doesn't exist
+    if [[ ! -f "$config_file" ]]; then
+        echo "📝 Creating new aichat config file..."
+        cat > "$config_file" <<'EOF'
+# see https://github.com/sigoden/aichat/blob/main/config.example.yaml
+
+model: gpt-4o-mini
+stream: true
+editor: nano
+keybindings: emacs
+
+# Uncomment and configure if using Ollama
+# clients:
+# - type: openai-compatible
+#   name: ollama
+#   api_base: http://localhost:11434/v1
+#   api_key: none
+#   models:
+#   - name: embeddinggemma:300m
+#     type: embedding
+#     default_chunk_size: 1000
+#     max_batch_size: 100
+#   - name: Qwen3-Reranker-8B:Q4_K_M
+#     type: reranker
+#   - name: llama3.2:3b
+#     supports_vision: false
+#     supports_function_calling: true
+
+# Visit https://github.com/sigoden/llm-functions for setup instructions
+function_calling: true           # Enables or disables function calling (Globally).
+mapping_tools:                   # Alias for a tool or toolset
+  fs: 'fs_cat,fs_ls,fs_mkdir,fs_rm,fs_write'
+use_tools: null                  # Which tools to use by default
+
+# Controls the persistence of the session. if true, auto save; if false, not save; if null, asking the user
+save_session: null
+# Compress session when token count reaches or exceeds this threshold
+compress_threshold: 4000
+# Text prompt used for creating a concise summary of session message
+summarize_prompt: '...'
+# Text prompt used for including the summary of the entire session
+summary_prompt: '...'
+
+highlight: true                  # Controls syntax highlighting
+theme: null                      # Color theme (possible value: dark/light)
+# Custom REPL prompt, see https://github.com/sigoden/aichat/wiki/Custom-REPL-Prompt for more details
+left_prompt: '...'
+right_prompt: '...'
+
+serve_addr: 127.0.0.1:8000                  # Serve listening address 
+user_agent: null                            # Set User-Agent HTTP header, use `auto` for aichat/<current-version>
+save_shell_history: true                    # Whether to save shell execution command to the history file
+#sync_models_url: <url>                      # URL to sync model changes from
+
+# Start the REPL and one-shot CLI in the "local" role by default
+repl_prelude: "role:local"
+cmd_prelude:  "role:local"
+EOF
+        chmod 644 "$config_file"
+        echo "✅ Config file created with comprehensive default settings"
+        echo "   📋 Features enabled: Function calling, shell history, local role"
+        echo "   🔧 Edit ~/.config/aichat/config.yaml to customize further"
+        echo "   💡 Uncomment Ollama section if using local models"
+        return 0
+    fi
+    
+    # Check if preludes are already configured
+    if grep -q "repl_prelude.*role:local" "$config_file" && grep -q "cmd_prelude.*role:local" "$config_file"; then
+        echo "ℹ️  Local role already configured as default"
+        return 0
+    fi
+    
+    # Create backup of existing config
+    cp "$config_file" "$config_file.backup.$(date +%s)"
+    echo "📋 Backup created: $config_file.backup.$(date +%s)"
+    
+    # Remove existing prelude configurations if present
+    sed -i '/^repl_prelude:/d' "$config_file"
+    sed -i '/^cmd_prelude:/d' "$config_file"
+    
+    # Add the local role configuration
+    cat >> "$config_file" <<EOF
+
+# Start the REPL and one-shot CLI in the "local" role by default
+# Added by install-aichat script
+repl_prelude: "role:local"
+cmd_prelude:  "role:local"
+EOF
+    
+    echo "✅ Config updated to use local role by default"
+    echo "   REPL mode: Will start with local role context"
+    echo "   CLI mode: Will use local role for one-shot commands"
+    
+    return 0
+}
+
+# Test if shell integration is working
+test_shell_integration() {
+    echo "🧪 Testing shell integration..."
+    
+    local shell_type="$1"
+    case "$shell_type" in
+        zsh)
+            if command -v zsh >/dev/null 2>&1; then
+                echo -n "   zsh integration: "
+                if zsh -c 'source ~/.zshrc 2>/dev/null && which _aichat_zsh' >/dev/null 2>&1; then
+                    echo "✅ loaded"
+                    echo "   📝 Test: Type a command, then press Alt+E (or Esc+E) to enhance it"
+                    echo "   📝 Example: Type 'list files' then Alt+E → becomes 'ls' or 'find' command"
+                    echo "   🧪 Quick test: aichat -e 'show current directory' → $(aichat -e 'show current directory' 2>/dev/null | head -1 || echo 'pwd')"
+                else
+                    echo "❌ not loaded"
+                fi
+            fi
+            ;;
+        bash)
+            if command -v bash >/dev/null 2>&1; then
+                echo -n "   bash integration: "
+                if grep -q "_aichat_bash" ~/.bashrc 2>/dev/null; then
+                    echo "✅ installed"
+                    echo "   📝 Test: Type a command, then press Alt+E (or Esc+E) to enhance it"
+                    echo "   📝 To activate: start a new bash session or run 'source ~/.bashrc'"
+                else
+                    echo "❌ not installed"
+                fi
+            fi
+            ;;
+        fish)
+            if command -v fish >/dev/null 2>&1; then
+                echo -n "   fish integration: "
+                if fish -c 'functions -q _aichat_fish' >/dev/null 2>&1; then
+                    echo "✅ loaded"
+                    echo "   📝 Test: Type a command, then press Alt+E (or Esc+E) to enhance it"
+                else
+                    echo "❌ not loaded"
+                fi
+            fi
+            ;;
+        *)
+            echo "   ⚠️  Shell integration testing not supported for: $shell_type"
+            ;;
+    esac
+}
+
+# Test if completions are working
+test_completions() {
+    echo "🧪 Testing completions..."
+    
+    # Test zsh completion
+    if command -v zsh >/dev/null 2>&1; then
+        echo -n "   zsh: "
+        if zsh -c 'autoload -U compinit; compinit; which _aichat' >/dev/null 2>&1; then
+            echo "✅ available"
+        else
+            echo "❌ not loaded"
+        fi
+    fi
+    
+    # Test bash completion
+    if command -v bash >/dev/null 2>&1; then
+        echo -n "   bash: "
+        if bash -c 'source /usr/share/bash-completion/bash_completion 2>/dev/null && source /usr/share/bash-completion/completions/aichat 2>/dev/null && complete -p aichat' >/dev/null 2>&1; then
+            echo "✅ available"
+        else
+            echo "❌ not loaded"
+        fi
+    fi
+    
+    # Test fish completion
+    if command -v fish >/dev/null 2>&1; then
+        echo -n "   fish: "
+        if [[ -f "/usr/share/fish/vendor_completions.d/aichat.fish" || -f "$HOME/.config/fish/completions/aichat.fish" ]]; then
+            echo "✅ available"
+        else
+            echo "❌ not installed"
+        fi
+    fi
+}
+
+# ------------------------------------------------------------------
+# 1. Resolve parameters
+# ------------------------------------------------------------------
+if [[ $# -eq 0 ]]; then
+    echo "Enter the aichat release version (e.g. 0.24.25):"
+    read -r VERSION
+    if [[ -z $VERSION ]]; then
+        echo "❌ No version supplied."
+        exit 1
+    fi
+else
+    VERSION="$1"
+fi
+
+# Validate version format
+if ! validate_version "$VERSION"; then
+    exit 1
+fi
+
+# Check for existing installation
+check_existing_installation
+
+# Detect shell (always needed for completions)
+DETECTED_SHELL=$(detect_shell)
+echo "ⓘ Detected shell: $DETECTED_SHELL"
+
+# Ask about shell integration
+echo "Do you want to install shell integration? This allows you to enhance"
+echo "commands with AI by pressing Alt+E (or Esc+E) in your terminal. (Y/n):"
+read -r install_integration
+if [[ ! $install_integration =~ ^[Nn]$ ]]; then
+    INSTALL_INTEGRATION=true
+    if [[ "$DETECTED_SHELL" != "bash" && "$DETECTED_SHELL" != "zsh" && "$DETECTED_SHELL" != "fish" ]]; then
+        echo "Choose your shell for integration:"
+        echo "1) bash"
+        echo "2) zsh  "
+        echo "3) fish"
+        echo "4) skip integration"
+        read -r shell_choice
+        case "$shell_choice" in
+            1) DETECTED_SHELL="bash" ;;
+            2) DETECTED_SHELL="zsh" ;;
+            3) DETECTED_SHELL="fish" ;;
+            *) INSTALL_INTEGRATION=false ;;
+        esac
+    fi
+else
+    INSTALL_INTEGRATION=false
+fi
+
+# ------------------------------------------------------------------
+# 2. Prepare variables
+# ------------------------------------------------------------------
+REPO="sigoden/aichat"
+BASE_URL="https://github.com/$REPO/releases/download/v$VERSION"
+
+# Detect system architecture
+ARCH=$(detect_architecture)
+if [[ $? -ne 0 ]]; then
+    exit 1
+fi
+
+# GitHub asset naming scheme (updated format includes 'v' prefix and 'unknown-linux-musl')
+case "$ARCH" in
+    linux-x86_64)
+        ASSET_NAME="aichat-v$VERSION-x86_64-unknown-linux-musl.tar.gz"
+        ;;
+    linux-aarch64)
+        ASSET_NAME="aichat-v$VERSION-aarch64-unknown-linux-musl.tar.gz"
+        ;;
+    linux-armv7)
+        ASSET_NAME="aichat-v$VERSION-armv7-unknown-linux-musleabihf.tar.gz"
+        ;;
+    *)
+        # Fallback to old naming scheme
+        ASSET_NAME="aichat-$VERSION-$ARCH.tar.gz"
+        ;;
+esac
+DOWNLOAD_URL="$BASE_URL/$ASSET_NAME"
+
+# Target installation location
+BIN_DIR="/usr/local/bin"
+TARGET_BIN="$BIN_DIR/aichat"
+
+# Temporary working directory
+TMPDIR="$(mktemp -d -p /tmp aichat-install-XXXXXX)"
+
+# ------------------------------------------------------------------
+# 3. Check prerequisites
+# ------------------------------------------------------------------
+for CMD in curl tar mv chmod; do
+    if ! command -v "$CMD" >/dev/null 2>&1; then
+        echo "❌ $CMD is not installed. Please install it before running this script."
+        exit 1
+    fi
+done
+
+# ------------------------------------------------------------------
+# 4. Download the asset (skip if binary installation not needed)
+# ------------------------------------------------------------------
+if [[ "$SKIP_BINARY_INSTALL" == "false" ]]; then
+    echo "📥 Downloading $ASSET_NAME from GitHub ..."
+    if ! curl -LfsS -o "$TMPDIR/$ASSET_NAME" "$DOWNLOAD_URL"; then
+        echo "❌ Failed to download $DOWNLOAD_URL"
+        rm -rf "$TMPDIR"
+        exit 1
+    fi
+fi
+
+# ------------------------------------------------------------------
+# 5. Extract the binary (skip if binary installation not needed)
+# ------------------------------------------------------------------
+if [[ "$SKIP_BINARY_INSTALL" == "false" ]]; then
+    echo "📦 Extracting the archive ..."
+    tar -xzf "$TMPDIR/$ASSET_NAME" -C "$TMPDIR"
+
+    # The tarball usually contains a directory named `aichat-*` with the binary inside.
+    # Find the most likely location where the executable is located.
+    if [[ -f "$TMPDIR/aichat" ]]; then
+        EXTRACTED_BIN="$TMPDIR/aichat"
+    elif [[ -f "$TMPDIR/aichat-$VERSION/aichat" ]]; then
+        EXTRACTED_BIN="$TMPDIR/aichat-$VERSION/aichat"
+    else
+        echo "❌ Could not find the executable inside the archive."
+        rm -rf "$TMPDIR"
+        exit 1
+    fi
+fi
+
+# ------------------------------------------------------------------
+# 6. Install the binary (skip if binary installation not needed)
+# ------------------------------------------------------------------
+if [[ "$SKIP_BINARY_INSTALL" == "false" ]]; then
+    echo "🚀 Installing aichat to $TARGET_BIN ..."
+
+    # Use sudo if necessary
+    if [[ $EUID -ne 0 ]]; then
+        sudo mv "$EXTRACTED_BIN" "$TARGET_BIN"
+        sudo chmod 755 "$TARGET_BIN"
+    else
+        mv "$EXTRACTED_BIN" "$TARGET_BIN"
+        chmod 755 "$TARGET_BIN"
+    fi
+
+    # Verify that the binary works
+    "$TARGET_BIN" --help | head -n 3 || {
+        echo "❌ The installed binary does not appear to work."
+        rm -rf "$TMPDIR"
+        exit 1
+    }
+fi
+
+# ------------------------------------------------------------------
+# 6.5. Install gen-aichat-role script and create wrapper
+# ------------------------------------------------------------------
+# Check if gen-aichat-role script exists in current directory
+GEN_ROLE_SCRIPT="$(dirname "$0")/gen-aichat-role"
+if [[ -f "$GEN_ROLE_SCRIPT" ]]; then
+    echo "� Installing gen-aichat-role script..."
+    
+    # Install gen-aichat-role to /usr/local/bin
+    if [[ $EUID -ne 0 ]]; then
+        sudo install -m 755 "$GEN_ROLE_SCRIPT" /usr/local/bin/gen-aichat-role
+    else
+        install -m 755 "$GEN_ROLE_SCRIPT" /usr/local/bin/gen-aichat-role
+    fi
+    
+    echo "✅ gen-aichat-role installed to /usr/local/bin/gen-aichat-role"
+    
+    # Create wrapper only if we installed the binary
+    if [[ "$SKIP_BINARY_INSTALL" == "false" && -f "$TARGET_BIN" ]]; then
+        echo "🔄 Creating aichat wrapper with fresh role generation..."
+        
+        WRAPPER_CONTENT='#!/usr/bin/env bash
+# aichat wrapper - ensures local role is always fresh
+# Generated by install-aichat script
+
+# Update the local role with current system context
+if command -v gen-aichat-role >/dev/null 2>&1; then
+    gen-aichat-role 2>/dev/null || true
+fi
+
+# Execute the actual aichat binary with all arguments
+exec /usr/local/bin/aichat.real "$@"
+'
+        
+        # Move the original aichat binary to aichat.real
+        if [[ $EUID -ne 0 ]]; then
+            sudo mv "$TARGET_BIN" "${TARGET_BIN}.real"
+            echo "$WRAPPER_CONTENT" | sudo tee "$TARGET_BIN" > /dev/null
+            sudo chmod 755 "$TARGET_BIN"
+        else
+            mv "$TARGET_BIN" "${TARGET_BIN}.real"
+            echo "$WRAPPER_CONTENT" > "$TARGET_BIN"
+            chmod 755 "$TARGET_BIN"
+        fi
+        
+        echo "✅ aichat wrapper created - local role will be refreshed on each run"
+        echo "   Original binary: ${TARGET_BIN}.real"
+        echo "   Wrapper script: $TARGET_BIN"
+    elif [[ "$SKIP_BINARY_INSTALL" == "true" ]]; then
+        echo "ℹ️  Binary installation skipped - wrapper not created"
+        echo "   gen-aichat-role is available at /usr/local/bin/gen-aichat-role"
+        echo "   Run manually: gen-aichat-role && aichat --role local \"query\""
+    fi
+else
+    echo "⚠️  gen-aichat-role script not found in current directory, skipping"
+fi
+
+# ------------------------------------------------------------------
+# 7. Install shell completions (always available, independent of binary installation)
+# ------------------------------------------------------------------
+echo "⚙️  Installing shell completions..."
+
+# Function to install completion for a specific shell
+install_completion_for_shell() {
+    local shell_name="$1"
+    local completion_url="https://raw.githubusercontent.com/sigoden/aichat/refs/heads/main/scripts/completions/aichat.$shell_name"
+    local completion_content
+    
+    echo "📝 Installing $shell_name completion..."
+    
+    # Download completion script
+    if ! completion_content=$(curl -fsSL "$completion_url"); then
+        echo "⚠️  Failed to download $shell_name completion"
+        return 1
+    fi
+    
+    # Determine completion file location based on shell
+    local completion_file
+    case "$shell_name" in
+        bash)
+            # Try multiple locations for bash completions
+            if [[ -d "/usr/share/bash-completion/completions" ]]; then
+                completion_file="/usr/share/bash-completion/completions/aichat"
+            elif [[ -d "/etc/bash_completion.d" ]]; then
+                completion_file="/etc/bash_completion.d/aichat"
+            else
+                # Fallback to user-local completion
+                completion_file="$HOME/.local/share/bash-completion/completions/aichat"
+                # Directory will be created later in the installation process
+            fi
+            ;;
+        zsh)
+            # Try multiple locations for zsh completions (in order of preference)
+            if [[ -d "/usr/share/zsh/vendor-completions" ]]; then
+                completion_file="/usr/share/zsh/vendor-completions/_aichat"
+            elif [[ -d "/usr/share/zsh/site-functions" ]]; then
+                completion_file="/usr/share/zsh/site-functions/_aichat"
+            else
+                # Fallback to user-local completion
+                completion_file="$HOME/.local/share/zsh/site-functions/_aichat"
+                # Directory will be created later in the installation process
+            fi
+            ;;
+        fish)
+            # Fish completion location
+            if [[ -d "/usr/share/fish/vendor_completions.d" ]]; then
+                completion_file="/usr/share/fish/vendor_completions.d/aichat.fish"
+            else
+                # Fallback to user-local completion
+                completion_file="$HOME/.config/fish/completions/aichat.fish"
+                # Directory will be created later in the installation process
+            fi
+            ;;
+        *)
+            echo "⚠️  Unknown shell: $shell_name"
+            return 1
+            ;;
+    esac
+    
+    # Check if we need sudo for system-wide installation
+    local use_sudo=false
+    if [[ "$completion_file" == /usr/* || "$completion_file" == /etc/* ]]; then
+        if [[ $EUID -ne 0 ]]; then
+            use_sudo=true
+        fi
+    fi
+    
+    # Check if completion already exists
+    if [[ -f "$completion_file" ]]; then
+        echo "ℹ️  $shell_name completion already exists at $completion_file"
+        echo "   Do you want to overwrite it? (y/N):"
+        read -r overwrite
+        if [[ ! $overwrite =~ ^[Yy]$ ]]; then
+            echo "ℹ️  Skipping $shell_name completion"
+            return 0
+        fi
+    fi
+    
+    # Ensure completion directory exists
+    local completion_dir
+    completion_dir="$(dirname "$completion_file")"
+    
+    if [[ ! -d "$completion_dir" ]]; then
+        echo "📁 Creating completion directory: $completion_dir"
+        if [[ "$use_sudo" == "true" ]]; then
+            sudo mkdir -p "$completion_dir" || {
+                echo "❌ Failed to create completion directory $completion_dir"
+                return 1
+            }
+        else
+            mkdir -p "$completion_dir" || {
+                echo "❌ Failed to create completion directory $completion_dir"
+                return 1
+            }
+        fi
+    fi
+    
+    # Install the completion file
+    if [[ "$use_sudo" == "true" ]]; then
+        if echo "$completion_content" | sudo tee "$completion_file" > /dev/null; then
+            sudo chmod 644 "$completion_file"
+        else
+            echo "❌ Failed to write $shell_name completion file"
+            return 1
+        fi
+    else
+        if echo "$completion_content" > "$completion_file"; then
+            chmod 644 "$completion_file"
+        else
+            echo "❌ Failed to write $shell_name completion file"
+            return 1
+        fi
+    fi
+    
+    echo "✅ $shell_name completion installed at $completion_file"
+    
+    # Provide specific activation instructions for each shell
+    case "$shell_name" in
+        zsh)
+            echo "   To activate: run 'autoload -U compinit && compinit' or restart your zsh session"
+            ;;
+        bash)
+            echo "   To activate: restart your bash session or run 'source /etc/bash_completion'"
+            ;;
+        fish)
+            echo "   To activate: restart your fish session (completions auto-load)"
+            ;;
+    esac
+    
+    return 0
+}
+
+# Ask user which completions to install
+echo "Which shell completions would you like to install?"
+echo "1) All shells (bash, zsh, fish)"
+echo "2) Current shell only ($DETECTED_SHELL)"
+echo "3) Choose specific shells"
+echo "4) Skip completions"
+read -r completion_choice
+
+case "$completion_choice" in
+    1)
+        # Install all completions
+        for shell in bash zsh fish; do
+            install_completion_for_shell "$shell" || echo "⚠️  Failed to install $shell completion"
+        done
+        echo "ℹ️  All completions installed. Restart your shell to activate."
+        ;;
+    2)
+        # Install for detected shell only
+        if [[ "$DETECTED_SHELL" =~ ^(bash|zsh|fish)$ ]]; then
+            install_completion_for_shell "$DETECTED_SHELL" || echo "⚠️  Failed to install $DETECTED_SHELL completion"
+            echo "ℹ️  Restart your shell or run 'source ~/.${DETECTED_SHELL}rc' to activate."
+        else
+            echo "⚠️  Current shell ($DETECTED_SHELL) not supported for completions"
+        fi
+        ;;
+    3)
+        # Choose specific shells
+        echo "Select shells (space-separated numbers, e.g., '1 3'):"
+        echo "1) bash  2) zsh  3) fish"
+        read -r shell_selection
+        for choice in $shell_selection; do
+            case "$choice" in
+                1) install_completion_for_shell "bash" ;;
+                2) install_completion_for_shell "zsh" ;;
+                3) install_completion_for_shell "fish" ;;
+                *) echo "⚠️  Invalid choice: $choice" ;;
+            esac
+        done
+        echo "ℹ️  Selected completions installed. Restart your shells to activate."
+        ;;
+    *)
+        echo "ℹ️  Skipping shell completions installation."
+        ;;
+esac
+
+# ------------------------------------------------------------------
+# 8. Install shell integration (if requested)
+# ------------------------------------------------------------------
+if [[ "$INSTALL_INTEGRATION" == "true" && "$DETECTED_SHELL" =~ ^(bash|zsh|fish)$ ]]; then
+    install_shell_integration "$DETECTED_SHELL" || {
+        echo "⚠️  Shell integration installation failed, but aichat binary was installed successfully."
+    }
+fi
+
+# ------------------------------------------------------------------
+# 9. Ensure aichat configuration directories exist
+# ------------------------------------------------------------------
+ensure_aichat_config_dirs || {
+    echo "⚠️  Failed to create aichat configuration directories"
+}
+
+# ------------------------------------------------------------------
+# 10. Configure local role as default (only if gen-aichat-role was installed)
+# ------------------------------------------------------------------
+if [[ -f "$GEN_ROLE_SCRIPT" ]]; then
+    configure_local_role_default || {
+        echo "⚠️  Failed to configure local role as default"
+    }
+fi
+
+# ------------------------------------------------------------------
+# 11. Test installation
+# ------------------------------------------------------------------
+if [[ "$INSTALL_INTEGRATION" == "true" ]]; then
+    test_shell_integration "$DETECTED_SHELL"
+fi
+test_completions
+
+# ------------------------------------------------------------------
+# 12. Cleanup
+# ------------------------------------------------------------------
+rm -rf "$TMPDIR"
+
+if [[ "$SKIP_BINARY_INSTALL" == "false" ]]; then
+    echo "✨ aichat $VERSION has been installed successfully!"
+    echo "   Architecture: $ARCH"
+    echo "   Location: $TARGET_BIN"
+    if [[ -f "$GEN_ROLE_SCRIPT" ]]; then
+        echo "   Wrapper: Installed (auto-refreshes local role)"
+        echo "   Original binary: ${TARGET_BIN}.real"
+        echo "   Role generator: /usr/local/bin/gen-aichat-role"
+    fi
+else
+    echo "✨ aichat configuration completed!"
+fi
+if [[ "$INSTALL_INTEGRATION" == "true" ]]; then
+    echo "   Shell integration: Installed for $DETECTED_SHELL"
+    echo "   Usage: Press Alt+E (or Esc+E) to enhance commands with AI"
+fi
+if [[ -f "$GEN_ROLE_SCRIPT" ]]; then
+    echo "   Local role: Configured as default for CLI and REPL"
+    echo "   System awareness: All commands have local system context"
+fi
+echo "   Configuration: Enhanced default with function calling enabled"
+echo "   Config file: ~/.config/aichat/config.yaml"
+if [[ "$SKIP_BINARY_INSTALL" == "false" ]]; then
+    echo "   You can start it by running 'aichat' in your terminal."
+    if [[ -f "$GEN_ROLE_SCRIPT" ]]; then
+        echo "   Try: 'aichat \"Tell me about this system\"' (no --role needed!)"
+    fi
+fi
+echo "   Run 'aichat --help' to see available options."

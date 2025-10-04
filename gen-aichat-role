@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# -------------------------------------------------------------------
+# gen-aichat-role
+# Generates a dynamic role file for aichat with host context.
+#
+# Install/update (requires sudo because /usr/local/bin):
+#   sudo install -m 755 gen-aichat-role /usr/local/bin/gen-aichat-role
+#
+# Run (NO sudo; writes to your $HOME):
+#   /usr/local/bin/gen-aichat-role
+#   aichat --role local "Summarize my system context"
+# -------------------------------------------------------------------
+
+ROLES_DIR="${HOME}/.config/aichat/roles"
+mkdir -p "$ROLES_DIR"
+
+# --- basics
+host="$(hostname)"
+kernel="$(uname -mrs)"
+user="${USER:-$(id -un)}"
+shell="${SHELL:-zsh}"
+distro="$(grep -Po '(?<=^PRETTY_NAME=).+' /etc/os-release | tr -d '"' 2>/dev/null || echo 'unknown')"
+loadavg="$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || uptime | sed 's/.*load average: //')"
+mem="$(free -h 2>/dev/null | awk '/^Mem:/ {printf "%s/%s used\n",$3,$2}')"
+now="$(date -Is)"
+
+# --- networking
+ipv4="$(ip -o -4 addr show scope global up 2>/dev/null | awk '{print $2":"$4}' | paste -sd ', ' -)"
+ipv6="$(ip -o -6 addr show scope global up 2>/dev/null | awk '{print $2":"$4}' | sed 's/%[^ ]*//g' | paste -sd ', ' -)"
+default_iface="$(ip route 2>/dev/null | awk '/default/ {print $5; exit}')"
+
+# --- platform / virtualization detection
+virt_kind="$(systemd-detect-virt 2>/dev/null || echo unknown)"
+dmi_vendor="$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)"
+dmi_product="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
+dmi_bios_vendor="$(cat /sys/class/dmi/id/bios_vendor 2>/dev/null || true)"
+
+proxmox_hint="no"
+if printf '%s\n%s\n%s\n' "$dmi_vendor" "$dmi_product" "$dmi_bios_vendor" | grep -qi 'proxmox'; then
+  proxmox_hint="yes"
+fi
+
+# Some Proxmox guests show QEMU/KVM in DMI; tag as likely Proxmox
+if [ "$proxmox_hint" = "yes" ]; then
+  platform="Virtual Machine (Proxmox hypervisor)"
+elif [ "$virt_kind" = "kvm" ] || [ "$virt_kind" = "qemu" ]; then
+  if printf '%s' "$dmi_vendor $dmi_product $dmi_bios_vendor" | grep -qi 'qemu\|seabios\|ovmf'; then
+    platform="Virtual Machine (KVM/QEMU; likely Proxmox)"
+  else
+    platform="Virtual Machine (${virt_kind})"
+  fi
+elif [ "$virt_kind" = "oracle" ] || [ "$virt_kind" = "vmware" ] || [ "$virt_kind" = "microsoft" ]; then
+  platform="Virtual Machine (${virt_kind})"
+elif [ "$virt_kind" = "none" ] || [ -z "$virt_kind" ]; then
+  platform="Bare metal (no hypervisor detected)"
+else
+  platform="Virtualized (${virt_kind})"
+fi
+
+# --- service manager, firewall, pkg mgr, containers
+svc_mgr="$(command -v systemctl >/dev/null 2>&1 && echo systemd || echo 'unknown')"
+
+if command -v ufw >/dev/null 2>&1; then
+  firewall="ufw"
+elif command -v firewall-cmd >/dev/null 2>&1; then
+  firewall="firewalld"
+else
+  firewall="none"
+fi
+
+if command -v apt >/dev/null 2>&1; then
+  pkgmgr="apt"
+elif command -v dnf >/dev/null 2>&1; then
+  pkgmgr="dnf"
+elif command -v pacman >/dev/null 2>&1; then
+  pkgmgr="pacman"
+elif command -v zypper >/dev/null 2>&1; then
+  pkgmgr="zypper"
+elif command -v apk >/dev/null 2>&1; then
+  pkgmgr="apk"
+else
+  pkgmgr="unknown"
+fi
+
+if command -v docker >/dev/null 2>&1; then
+  container_runtime="docker"
+elif command -v podman >/dev/null 2>&1; then
+  container_runtime="podman"
+else
+  container_runtime="none"
+fi
+
+# --- git & cwd
+git_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'none')"
+cwd="$(pwd 2>/dev/null || echo "$HOME")"
+
+# --- disk snapshot (top 5 rows, skip tmpfs)
+disks="$(df -hT -x tmpfs -x devtmpfs 2>/dev/null | head -n 6)"
+
+# --- time/locale
+tz="$( (timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null) || echo 'unknown' )"
+lang="$( (locale 2>/dev/null | awk -F= '/^LANG=/{print $2; exit}') || echo 'unknown' )"
+
+# --- GPU detection (NVIDIA → AMD ROCm → generic lspci)
+gpu_section="None detected"
+if command -v nvidia-smi >/dev/null 2>&1; then
+  # Query name, VRAM total, and driver
+  mapfile -t lines < <(nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader 2>/dev/null || true)
+  cuda_ver="$(nvidia-smi 2>/dev/null | awk -F'CUDA Version:' 'NR==1{gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2}')"
+  if ((${#lines[@]})); then
+    gpu_section="Vendor: NVIDIA (CUDA ${cuda_ver:-unknown})
+GPUs:"
+    for l in "${lines[@]}"; do
+      # CSV fields: name, mem, driver
+      name="$(echo "$l" | awk -F',' '{gsub(/^ +| +$/,"",$1); print $1}')"
+      vram="$(echo "$l" | awk -F',' '{gsub(/^ +| +$/,"",$2); print $2}')"
+      drv="$(echo "$l" | awk -F',' '{gsub(/^ +| +$/,"",$3); print $3}')"
+      gpu_section+=$'\n'"- ${name} | VRAM ${vram} | Driver ${drv}"
+    done
+  fi
+elif command -v rocm-smi >/dev/null 2>&1; then
+  # Best-effort summary from rocm-smi
+  names="$(rocm-smi --showproductname 2>/dev/null | sed -n 's/^.*:\s*//p' | paste -sd ', ' -)"
+  drv="$(rocm-smi --showdriverversion 2>/dev/null | sed -n 's/^.*:\s*//p' | head -n1)"
+  vram="$(rocm-smi --showmeminfo vram 2>/dev/null | awk -F':' '/Total VRAM/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')"
+  gpu_section="Vendor: AMD ROCm
+GPUs: ${names:-unknown}
+Driver: ${drv:-unknown}
+VRAM: ${vram:-unknown}"
+else
+  # Generic fallback (Intel/others show here too)
+  lsout="$(lspci -nn 2>/dev/null | grep -iE 'vga|3d|display' || true)"
+  if [ -n "$lsout" ]; then
+    gpu_section="From lspci:
+$(echo "$lsout" | sed 's/^/- /')"
+  fi
+fi
+
+# --- proxies (if any)
+http_proxy="${http_proxy:-${HTTP_PROXY:-<unset>}}"
+https_proxy="${https_proxy:-${HTTPS_PROXY:-<unset>}}"
+no_proxy="${no_proxy:-${NO_PROXY:-<unset>}}"
+
+cat > "${ROLES_DIR}/local.md" <<EOROLE
+### Instructions (read first)
+- When suggesting shell commands, **include \`sudo\`** if the action requires elevated privileges (e.g., installing packages, editing files in /etc, restarting services, writing to system paths).
+- Prefer safe flags (\`--dry-run\`, \`-n\`, etc.) when available; call out destructive actions explicitly.
+- Use the detected managers: **package**=\`${pkgmgr}\`, **services**=\`${svc_mgr}\`.
+- Default shell is **${shell}**; user is **${user}** on host **${host}**.
+- Include both **IPv4 and IPv6** considerations when networking is involved.
+
+### System context
+Generated: ${now}
+Hostname: ${host}
+User: ${user}
+Shell: ${shell}
+OS: ${distro}
+Kernel: ${kernel}
+Platform: ${platform}
+Timezone: ${tz}
+Locale: ${lang}
+Service manager: ${svc_mgr}
+Firewall: ${firewall}
+Package manager: ${pkgmgr}
+Container runtime: ${container_runtime}
+
+### GPU
+${gpu_section}
+
+### Runtime state
+Load avg (1/5/15): ${loadavg}
+Memory: ${mem}
+CWD: ${cwd}
+Active git branch: ${git_branch}
+
+### Networking
+Default interface: ${default_iface:-unknown}
+IPv4 (iface:cidr): ${ipv4:-none}
+IPv6 (iface:cidr%zone): ${ipv6:-none}
+
+### Disk usage (top 5 entries)
+${disks}
+
+### Proxy (if set)
+HTTP_PROXY: ${http_proxy}
+HTTPS_PROXY: ${https_proxy}
+NO_PROXY: ${no_proxy}
+EOROLE
+
+chmod 644 "${ROLES_DIR}/local.md"
