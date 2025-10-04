@@ -27,7 +27,7 @@ IFS=$'\n\t'  # make read -r safer; useful for filenames with spaces
 validate_version() {
     local version="$1"
     if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "❌ Invalid version format. Expected format: X.Y.Z (e.g., 0.24.25)"
+        echo "❌ Invalid version format. Expected format: X.Y.Z (e.g., 0.30.0)"
         return 1
     fi
     return 0
