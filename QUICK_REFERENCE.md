@@ -2,7 +2,12 @@
 
 ## 🚀 Installation
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-repo/aichat-install/main/install-aichat | bash
+# One-line install (specify version)
+AICHAT_VERSION=0.30.0 curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
+
+# Or download and run
+wget https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat
+chmod +x install-aichat && ./install-aichat
 ```
 
 ## ⌨️ Shell Integration

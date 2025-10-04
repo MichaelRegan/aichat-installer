@@ -37,13 +37,16 @@ curl -fsSL https://raw.githubusercontent.com/your-repo/aichat-install/main/insta
 
 ### Manual Installation
 ```bash
-# Download the script
-wget https://raw.githubusercontent.com/your-repo/aichat-install/main/install-aichat
+# Method 1: Direct download and run
+wget https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat
 chmod +x install-aichat
-
-# Run the installation
 ./install-aichat
+
+# Method 2: One-line install (specify version via environment variable)
+AICHAT_VERSION=0.30.0 curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
 ```
+
+> 💡 **Tip**: For the one-line install, replace `0.30.0` with your desired version.
 
 ## 📋 Installation Options
 

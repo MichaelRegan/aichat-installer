@@ -3,10 +3,14 @@
 #  Download and install aichat from GitHub releases
 #
 #  Usage:
-#     ./aichat-install.sh <version>
+#     ./install-aichat <version>
+#     AICHAT_VERSION=<version> ./install-aichat
+#     AICHAT_VERSION=<version> curl -fsSL <url> | bash
 #
-#  Example:
-#     ./aichat-install.sh 0.24.25
+#  Examples:
+#     ./install-aichat 0.30.0
+#     AICHAT_VERSION=0.30.0 ./install-aichat
+#     AICHAT_VERSION=0.30.0 curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
 #
 #  The script automatically asks for sudo when needed.
 
@@ -370,11 +374,18 @@ test_completions() {
 # 1. Resolve parameters
 # ------------------------------------------------------------------
 if [[ $# -eq 0 ]]; then
-    echo "Enter the aichat release version (e.g. 0.24.25):"
-    read -r VERSION
-    if [[ -z $VERSION ]]; then
-        echo "❌ No version supplied."
-        exit 1
+    # Check for environment variable first (useful for piped installs)
+    if [[ -n "${AICHAT_VERSION:-}" ]]; then
+        VERSION="$AICHAT_VERSION"
+        echo "Using version from AICHAT_VERSION: $VERSION"
+    else
+        echo "Enter the aichat release version (e.g. 0.24.25):"
+        read -r VERSION
+        if [[ -z $VERSION ]]; then
+            echo "❌ No version supplied."
+            echo "💡 Tip: For non-interactive installs, use: AICHAT_VERSION=0.30.0 curl ... | bash"
+            exit 1
+        fi
     fi
 else
     VERSION="$1"
