@@ -58,9 +58,11 @@ detect_architecture() {
 
 # Get latest release version from GitHub API
 get_latest_version() {
-    echo "🔍 Fetching latest aichat release..."
     local latest_url="https://api.github.com/repos/sigoden/aichat/releases/latest"
     local version
+    
+    # Show progress to stderr so it doesn't interfere with version output
+    echo "🔍 Fetching latest aichat release..." >&2
     
     # Try to get version from GitHub API
     if command -v curl >/dev/null 2>&1; then
@@ -69,12 +71,12 @@ get_latest_version() {
         version=$(wget -qO- "$latest_url" | grep '"tag_name":' | sed -E 's/.*"tag_name": *"v?([^"]+)".*/\1/' 2>/dev/null)
     fi
     
-    # Validate the version format
+    # Validate the version format and return only the version
     if [[ -n "$version" ]] && validate_version "$version"; then
         echo "$version"
         return 0
     else
-        echo "❌ Failed to fetch latest version from GitHub API"
+        echo "❌ Failed to fetch latest version from GitHub API" >&2
         return 1
     fi
 }
@@ -418,10 +420,19 @@ if [[ $# -eq 0 ]]; then
         # Try to get latest version automatically
         if VERSION=$(get_latest_version); then
             echo "✅ Auto-detected latest version: $VERSION"
-            echo "Press Enter to install $VERSION, or specify a different version:"
-            read -r user_input
-            if [[ -n "$user_input" ]]; then
-                VERSION="$user_input"
+            
+            # Check if we're in a non-interactive environment (like piped from curl)
+            if [[ ! -t 0 ]]; then
+                echo "Non-interactive mode detected, proceeding with version $VERSION"
+            else
+                echo "Press Enter to install $VERSION, or specify a different version:"
+                read -r user_input
+                if [[ -n "$user_input" ]]; then
+                    VERSION="$user_input"
+                    echo "Using specified version: $VERSION"
+                else
+                    echo "Using auto-detected version: $VERSION"
+                fi
             fi
         else
             echo "Enter the aichat release version (e.g. 0.30.0):"
