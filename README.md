@@ -30,33 +30,33 @@ A comprehensive installation script for [aichat](https://github.com/sigoden/aich
 
 ## 🚀 Installation
 
-There are two main ways to install: **Interactive** (recommended for most users) and **Automated** (for scripting or CI/CD).
+There are two main ways to install: **Full Installation** (recommended for all features) and **Basic Installation** (for the binary only).
 
-### Method 1: Interactive Installation (Recommended)
+### Method 1: Full Installation (Recommended)
 
-This method will download the script and run it in your terminal, allowing you to answer installation questions.
+This is the best way to get all features, including the **default local system role**.
 
 ```bash
-# 1. Download the script
-wget https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat
+# 1. Clone the repository
+git clone https://github.com/MichaelRegan/aichat-installer.git
 
-# 2. Make it executable
-chmod +x install-aichat
+# 2. Navigate into the directory
+cd aichat-installer
 
-# 3. Run it
+# 3. Run the script
 ./install-aichat
 ```
-The script will then guide you through the process.
+This method ensures that all helper scripts (like `gen-aichat-role`) are available, giving you the complete, feature-rich experience.
 
-### Method 2: Automated (Non-Interactive) Installation
+### Method 2: Basic Installation (Binary Only)
 
-This method is for automated setups. It will use default settings and will not pause for input.
+This method is for quick, automated setups and only installs the `aichat` binary. It **does not** include the system context role or other advanced features.
 
 ```bash
-# Install latest version (fully automated)
+# Install latest version (binary only)
 curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
 
-# Install a specific version (fully automated)
+# Install a specific version (binary only)
 curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | AICHAT_VERSION=0.30.0 bash
 ```
 

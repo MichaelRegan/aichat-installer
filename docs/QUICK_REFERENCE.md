@@ -2,20 +2,17 @@
 
 ## 🚀 Installation
 
-### Interactive (Recommended)
+### Full Installation (Recommended)
 ```bash
-wget https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat
-chmod +x install-aichat
+git clone https://github.com/MichaelRegan/aichat-installer.git
+cd aichat-installer
 ./install-aichat
 ```
 
-### Automated (Non-Interactive)
+### Basic Installation (Binary Only)
 ```bash
 # Install latest version
 curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
-
-# Install a specific version
-curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | AICHAT_VERSION=0.30.0 bash
 ```
 
 ## ⌨️ Shell Integration
