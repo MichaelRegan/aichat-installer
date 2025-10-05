@@ -911,5 +911,7 @@ echo "   Run 'aichat --help' to see available options."
 
 echo ""
 echo "🎉 Installation complete! Happy AI-assisted command line usage!"
+}
 
-} # End of main function
+# Execute main function at the end of the script
+main "$@"
