@@ -398,8 +398,12 @@ test_completions() {
 }
 
 # ------------------------------------------------------------------
-# 1. Resolve parameters
+# Main execution logic
 # ------------------------------------------------------------------
+main() {
+    # ------------------------------------------------------------------
+    # 1. Resolve parameters
+    # ------------------------------------------------------------------
 if [[ $# -eq 0 ]]; then
     # Check for environment variable first (useful for piped installs)
     if [[ -n "${AICHAT_VERSION:-}" ]]; then
@@ -907,3 +911,5 @@ echo "   Run 'aichat --help' to see available options."
 
 echo ""
 echo "🎉 Installation complete! Happy AI-assisted command line usage!"
+
+} # End of main function
