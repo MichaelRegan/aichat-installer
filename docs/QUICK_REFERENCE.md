@@ -1,16 +1,21 @@
 # Quick Reference Card
 
 ## 🚀 Installation
+
+### Interactive (Recommended)
 ```bash
-# One-line install (latest version - recommended)
+wget https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat
+chmod +x install-aichat
+./install-aichat
+```
+
+### Automated (Non-Interactive)
+```bash
+# Install latest version
 curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
 
-# Specify version
-AICHAT_VERSION=0.30.0 curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
-
-# Download and run
-wget https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat
-chmod +x install-aichat && ./install-aichat
+# Install a specific version
+curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | AICHAT_VERSION=0.30.0 bash
 ```
 
 ## ⌨️ Shell Integration

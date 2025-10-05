@@ -28,28 +28,39 @@ A comprehensive installation script for [aichat](https://github.com/sigoden/aich
 - **Platform identification** (OS, virtualization, containerization)
 - **Fresh context** regenerated on each aichat run
 
-## 🚀 Quick Start
+## 🚀 Installation
 
-### One-Line Installation
+There are two main ways to install: **Interactive** (recommended for most users) and **Automated** (for scripting or CI/CD).
+
+### Method 1: Interactive Installation (Recommended)
+
+This method will download the script and run it in your terminal, allowing you to answer installation questions.
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-repo/aichat-install/main/install-aichat | bash
-```
-
-### Manual Installation
-```bash
-# Method 1: One-line install (latest version - recommended)
-curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
-
-# Method 2: Specify version
-AICHAT_VERSION=0.30.0 curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
-
-# Method 3: Download and run locally
+# 1. Download the script
 wget https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat
+
+# 2. Make it executable
 chmod +x install-aichat
+
+# 3. Run it
 ./install-aichat
 ```
+The script will then guide you through the process.
 
-> 💡 **Tip**: The script auto-detects the latest version by default. Use `AICHAT_VERSION=latest` or specify a version like `AICHAT_VERSION=0.30.0`.
+### Method 2: Automated (Non-Interactive) Installation
+
+This method is for automated setups. It will use default settings and will not pause for input.
+
+```bash
+# Install latest version (fully automated)
+curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | bash
+
+# Install a specific version (fully automated)
+curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/install-aichat | AICHAT_VERSION=0.30.0 bash
+```
+
+> **Warning:** The automated method will fail if it encounters a prompt that requires user input (e.g., if aichat is already installed). For true automation, you may need to add flags to the script to pre-approve all actions.
 
 ## 📋 Installation Options
 
