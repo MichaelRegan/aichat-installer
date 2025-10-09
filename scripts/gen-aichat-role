@@ -92,6 +92,36 @@ else
   container_runtime="none"
 fi
 
+# --- Docker status and running containers
+docker_status="Not available"
+running_containers="None"
+
+if [ "$container_runtime" = "docker" ]; then
+  # Check if Docker daemon is running
+  if docker info >/dev/null 2>&1; then
+    docker_status="Running"
+    # Get running containers (max 10 for brevity)
+    running_list="$(docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' 2>/dev/null | tail -n +2 | head -10)"
+    if [ -n "$running_list" ]; then
+      running_containers="$running_list"
+    else
+      running_containers="No containers running"
+    fi
+  else
+    docker_status="Installed but daemon not running"
+  fi
+elif [ "$container_runtime" = "podman" ]; then
+  # Check podman containers
+  running_list="$(podman ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' 2>/dev/null | tail -n +2 | head -10)"
+  if [ -n "$running_list" ]; then
+    docker_status="Podman available"
+    running_containers="$running_list"
+  else
+    docker_status="Podman available"
+    running_containers="No containers running"
+  fi
+fi
+
 # --- git & cwd
 git_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'none')"
 cwd="$(pwd 2>/dev/null || echo "$HOME")"
@@ -165,6 +195,11 @@ Service manager: ${svc_mgr}
 Firewall: ${firewall}
 Package manager: ${pkgmgr}
 Container runtime: ${container_runtime}
+
+### Docker/Containers
+Status: ${docker_status}
+Running containers:
+${running_containers}
 
 ### GPU
 ${gpu_section}
