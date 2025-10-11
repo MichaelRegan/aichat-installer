@@ -173,55 +173,57 @@ http_proxy="${http_proxy:-${HTTP_PROXY:-<unset>}}"
 https_proxy="${https_proxy:-${HTTPS_PROXY:-<unset>}}"
 no_proxy="${no_proxy:-${NO_PROXY:-<unset>}}"
 
-cat > "${ROLES_DIR}/local.md" <<EOROLE
-### Instructions (read first)
-- When suggesting shell commands, **include \`sudo\`** if the action requires elevated privileges (e.g., installing packages, editing files in /etc, restarting services, writing to system paths).
-- Prefer safe flags (\`--dry-run\`, \`-n\`, etc.) when available; call out destructive actions explicitly.
-- Use the detected managers: **package**=\`${pkgmgr}\`, **services**=\`${svc_mgr}\`.
-- Default shell is **${shell}**; user is **${user}** on host **${host}**.
-- Include both **IPv4 and IPv6** considerations when networking is involved.
+cat > "${ROLES_DIR}/local.md" <<'EOROLE'
+# local
 
-### System context
-Generated: ${now}
-Hostname: ${host}
-User: ${user}
-Shell: ${shell}
-OS: ${distro}
-Kernel: ${kernel}
-Platform: ${platform}
-Timezone: ${tz}
-Locale: ${lang}
-Service manager: ${svc_mgr}
-Firewall: ${firewall}
-Package manager: ${pkgmgr}
-Container runtime: ${container_runtime}
+## init
+Be extra terse. Default to `sh` blocks; include `fish`/`pwsh` only when syntax differs materially. 
+Use the package manager and service manager from the context. 
+Show a quick verify command when useful. 
+Do not display any thoughts/reasoning—final answers and commands only.
 
-### Docker/Containers
-Status: ${docker_status}
-Running containers:
-${running_containers}
+## context (machine snapshot; parse as needed)
+```yaml
+# Generated: ${now}
+host: ${host}
+user: ${user}
+shell: ${shell}
+os: ${distro}
+kernel: ${kernel}
+platform: ${platform}
+timezone: ${tz}
+locale: ${lang}
+service_manager: ${svc_mgr}
+firewall: ${firewall}
+package_manager: ${pkgmgr}
+container_runtime: ${container_runtime}
 
-### GPU
-${gpu_section}
+docker:
+  status: ${docker_status}
+  running_containers: |
+$(echo "${running_containers}" | sed 's/^/    /')
 
-### Runtime state
-Load avg (1/5/15): ${loadavg}
-Memory: ${mem}
-CWD: ${cwd}
-Active git branch: ${git_branch}
+gpu: |
+$(echo "${gpu_section}" | sed 's/^/  /')
 
-### Networking
-Default interface: ${default_iface:-unknown}
-IPv4 (iface:cidr): ${ipv4:-none}
-IPv6 (iface:cidr%zone): ${ipv6:-none}
+runtime:
+  loadavg_1_5_15: ${loadavg}
+  memory_used: ${mem}
+  cwd: ${cwd}
+  git_branch: ${git_branch}
 
-### Disk usage (top 5 entries)
-${disks}
+networking:
+  default_iface: ${default_iface:-unknown}
+  ipv4_ifaces: ${ipv4:-none}
+  ipv6_ifaces: ${ipv6:-none}
 
-### Proxy (if set)
-HTTP_PROXY: ${http_proxy}
-HTTPS_PROXY: ${https_proxy}
-NO_PROXY: ${no_proxy}
+disks_top5: |
+$(echo "${disks}" | sed 's/^/  /')
+
+proxy:
+  http_proxy: ${http_proxy}
+  https_proxy: ${https_proxy}
+  no_proxy: ${no_proxy}
+
 EOROLE
-
 chmod 644 "${ROLES_DIR}/local.md"
