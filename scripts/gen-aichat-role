@@ -173,7 +173,7 @@ http_proxy="${http_proxy:-${HTTP_PROXY:-<unset>}}"
 https_proxy="${https_proxy:-${HTTPS_PROXY:-<unset>}}"
 no_proxy="${no_proxy:-${NO_PROXY:-<unset>}}"
 
-cat > "${ROLES_DIR}/local.md" <<'EOROLE'
+cat > "${ROLES_DIR}/local.md" <<EOROLE
 # local
 
 ## init
