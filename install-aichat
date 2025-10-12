@@ -98,18 +98,21 @@ check_existing_installation() {
 
 # Detect current shell
 detect_shell() {
-    # First try to detect the actual running shell process
-    local current_shell
-    current_shell=$(ps -p $$ -o comm= 2>/dev/null | tr -d '-')
-    
-    if [[ -n "$current_shell" && "$current_shell" != "unknown" ]]; then
-        echo "$current_shell"
-    elif [[ -n "${SHELL:-}" ]]; then
-        # Fallback to SHELL environment variable
+    # Prefer the SHELL environment variable as it indicates the user's default shell.
+    if [[ -n "${SHELL:-}" ]]; then
         basename "$SHELL"
-    else
-        echo "unknown"
+        return 0
     fi
+    
+    # Fallback to checking the parent process of the script
+    local parent_shell
+    parent_shell=$(ps -p $PPID -o comm= 2>/dev/null | tr -d '-')
+    if [[ -n "$parent_shell" && "$parent_shell" != "unknown" ]]; then
+        echo "$parent_shell"
+        return 0
+    fi
+    
+    echo "unknown"
 }
 
 # Install shell integration

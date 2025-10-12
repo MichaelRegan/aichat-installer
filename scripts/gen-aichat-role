@@ -177,13 +177,15 @@ cat > "${ROLES_DIR}/local.md" <<EOROLE
 # local
 
 ## init
-Be extra terse. Default to `sh` blocks; include `fish`/`pwsh` only when syntax differs materially. 
+Be extra terse. Default to \`sh\` blocks; include \`fish\`/\`pwsh\` only when syntax differs materially. 
 Use the package manager and service manager from the context. 
+When suggesting shell commands, include \`sudo\` if the action requires elevated privileges (e.g., installing packages, editing files in /etc, restarting services, writing to system paths).
 Show a quick verify command when useful. 
+Include both IPv4 and IPv6 considerations when networking is involved.
 Do not display any thoughts/reasoning—final answers and commands only.
 
 ## context (machine snapshot; parse as needed)
-```yaml
+\`\`\`yaml
 # Generated: ${now}
 host: ${host}
 user: ${user}
@@ -224,6 +226,8 @@ proxy:
   http_proxy: ${http_proxy}
   https_proxy: ${https_proxy}
   no_proxy: ${no_proxy}
+\`\`\`
 
 EOROLE
+
 chmod 644 "${ROLES_DIR}/local.md"
