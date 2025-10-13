@@ -20,6 +20,72 @@ set -euo pipefail
 IFS=$'\n\t'  # make read -r safer; useful for filenames with spaces
 
 # ------------------------------------------------------------------
+# Non-interactive / automation controls
+# ------------------------------------------------------------------
+# If AICHAT_ASSUME_YES=1 is set in the environment, all prompts that would
+# normally require user confirmation will auto-accept the default affirmative
+# choice (proceed, install, overwrite, etc.). This is useful for CI or when
+# piping the script via curl without wanting to rely on `yes |` which can
+# trigger SIGPIPE with `set -o pipefail`.
+AICHAT_ASSUME_YES="${AICHAT_ASSUME_YES:-0}"
+# Dry run mode (no filesystem writes); can be enabled via env AICHAT_DRY_RUN=1 or --dry-run / -n flag
+AICHAT_DRY_RUN="${AICHAT_DRY_RUN:-0}"
+AICHAT_JSON="${AICHAT_JSON:-0}"           # When set with dry-run, output machine-readable JSON plan
+AICHAT_NO_WRAPPER="${AICHAT_NO_WRAPPER:-0}" # Skip creating wrapper (keep binary as aichat)
+AICHAT_SKIP_ROLE="${AICHAT_SKIP_ROLE:-0}"   # Skip installing gen-aichat-role & role config
+
+# Parse global flags (currently only --dry-run / -n). Remove them from $@ so version arg still works.
+if [[ $# -gt 0 ]]; then
+    _new_args=()
+    for _arg in "$@"; do
+        case "$_arg" in
+            --dry-run|-n)
+                AICHAT_DRY_RUN=1 ;;
+            --json)
+                AICHAT_JSON=1 ;;
+            --no-wrapper)
+                AICHAT_NO_WRAPPER=1 ;;
+            --skip-role)
+                AICHAT_SKIP_ROLE=1 ;;
+            *)
+                _new_args+=("$_arg")
+                ;;
+        esac
+    done
+    set -- "${_new_args[@]}"
+fi
+
+# In dry-run mode force assume-yes to avoid interactive prompts
+if [[ "$AICHAT_DRY_RUN" == "1" ]]; then AICHAT_ASSUME_YES=1; fi
+
+assume_yes() { [[ "${AICHAT_ASSUME_YES}" == "1" ]]; }
+
+prompt_yes_no() {
+    # Usage: prompt_yes_no <default_y|n> <question>
+    local default_ans="$1"; shift
+    local question="$*"
+    if assume_yes; then
+        # Always accept the affirmative path; if default is no we still force yes.
+        echo "$question" >&2
+        echo "(auto-yes due to AICHAT_ASSUME_YES=1)" >&2
+        return 0
+    fi
+    local prompt
+    if [[ "$default_ans" == "y" ]]; then
+        prompt="(Y/n)";
+    else
+        prompt="(y/N)";
+    fi
+    echo -n "$question $prompt: "
+    read -r reply || reply=""
+    if [[ -z "$reply" ]]; then
+        [[ "$default_ans" == "y" ]]
+    else
+        [[ "$reply" =~ ^[Yy]$ ]]
+    fi
+}
+
+# ------------------------------------------------------------------
 # Helper functions
 # ------------------------------------------------------------------
 
@@ -85,12 +151,16 @@ check_existing_installation() {
         local current_version
         current_version=$(aichat --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
         echo "ⓘ aichat is already installed (version: $current_version)"
-        echo "Do you want to continue with installation/update? (y/N):"
-        read -r response
-        if [[ ! $response =~ ^[Yy]$ ]]; then
-            echo "ⓘ Skipping binary installation/update."
-            SKIP_BINARY_INSTALL=true
-            return 0
+        if assume_yes; then
+            echo "(auto-yes) Proceeding with installation/update due to AICHAT_ASSUME_YES=1"
+        else
+            echo "Do you want to continue with installation/update? (y/N):"
+            read -r response
+            if [[ ! $response =~ ^[Yy]$ ]]; then
+                echo "ⓘ Skipping binary installation/update."
+                SKIP_BINARY_INSTALL=true
+                return 0
+            fi
         fi
     fi
     SKIP_BINARY_INSTALL=false
@@ -152,10 +222,14 @@ install_shell_integration() {
     # Check if integration is already installed
     if [[ -f "$config_file" ]] && grep -q "aichat.*integration\|_aichat_" "$config_file" 2>/dev/null; then
         echo "ⓘ Shell integration appears to already be installed in $config_file"
-        echo "Do you want to reinstall it? (y/N):"
-        read -r response
-        if [[ ! $response =~ ^[Yy]$ ]]; then
-            return 0
+        if assume_yes; then
+            echo "(auto-yes) Reinstalling integration due to AICHAT_ASSUME_YES=1"
+        else
+            echo "Do you want to reinstall it? (y/N):"
+            read -r response
+            if [[ ! $response =~ ^[Yy]$ ]]; then
+                return 0
+            fi
         fi
         # Remove existing integration
         if command -v sed >/dev/null 2>&1; then
@@ -174,6 +248,14 @@ install_shell_integration() {
         echo ""
         echo "# aichat shell integration (installed $(date))"
         echo "$integration_content"
+        if [[ "$shell_type" == "zsh" ]]; then
+            echo ""
+            echo "# Ensure Alt+E works for aichat"
+            echo "autoload -U _aichat_zsh"
+            echo "zle -N _aichat_zsh"
+            echo "bindkey '\eE' _aichat_zsh"
+            echo "bindkey '\ee' _aichat_zsh"
+        fi
         echo ""
     } >> "$config_file"
     
@@ -404,6 +486,15 @@ test_completions() {
 # Main execution logic
 # ------------------------------------------------------------------
 main() {
+    # If we are in JSON dry-run mode, redirect all normal stdout chatter to stderr so that
+    # the ONLY thing printed to stdout is the final JSON plan object. We restore stdout
+    # immediately before emitting the JSON. This makes machine parsing trivial and removes
+    # the need for fragile filtering in tests / CI pipelines.
+    if [[ "${AICHAT_DRY_RUN}" == "1" && "${AICHAT_JSON}" == "1" && -z "${AICHAT_JSON_STDOUT_REDIRECTED:-}" ]]; then
+        AICHAT_JSON_STDOUT_REDIRECTED=1
+        exec 3>&1            # save original stdout on FD 3
+        exec 1>&2            # send subsequent stdout messages to stderr
+    fi
     # ------------------------------------------------------------------
     # 1. Resolve parameters
     # ------------------------------------------------------------------
@@ -431,21 +522,30 @@ if [[ $# -eq 0 ]]; then
                 echo "Non-interactive mode detected, proceeding with version $VERSION"
             else
                 echo "Press Enter to install $VERSION, or specify a different version:"
-                read -r user_input
-                if [[ -n "$user_input" ]]; then
-                    VERSION="$user_input"
-                    echo "Using specified version: $VERSION"
+                if assume_yes; then
+                    echo "(auto) Using auto-detected version: $VERSION"
                 else
-                    echo "Using auto-detected version: $VERSION"
+                    read -r user_input
+                    if [[ -n "$user_input" ]]; then
+                        VERSION="$user_input"
+                        echo "Using specified version: $VERSION"
+                    else
+                        echo "Using auto-detected version: $VERSION"
+                    fi
                 fi
             fi
         else
             echo "Enter the aichat release version (e.g. 0.30.0):"
-            read -r VERSION
-            if [[ -z $VERSION ]]; then
-                echo "❌ No version supplied."
-                echo "💡 Tip: For non-interactive installs, use: curl ... | bash (auto-detects latest)"
+            if assume_yes; then
+                echo "(auto-fail) Cannot auto-select version without latest; please set AICHAT_VERSION or provide argument." >&2
                 exit 1
+            else
+                read -r VERSION
+                if [[ -z $VERSION ]]; then
+                    echo "❌ No version supplied."
+                    echo "💡 Tip: For non-interactive installs, use: curl ... | bash (auto-detects latest)"
+                    exit 1
+                fi
             fi
         fi
     fi
@@ -477,25 +577,30 @@ echo "ⓘ Detected shell: $DETECTED_SHELL"
 # Ask about shell integration
 echo "Do you want to install shell integration? This allows you to enhance"
 echo "commands with AI by pressing Alt+E (or Esc+E) in your terminal. (Y/n):"
-read -r install_integration
-if [[ ! $install_integration =~ ^[Nn]$ ]]; then
+if assume_yes; then
     INSTALL_INTEGRATION=true
-    if [[ "$DETECTED_SHELL" != "bash" && "$DETECTED_SHELL" != "zsh" && "$DETECTED_SHELL" != "fish" ]]; then
-        echo "Choose your shell for integration:"
-        echo "1) bash"
-        echo "2) zsh  "
-        echo "3) fish"
-        echo "4) skip integration"
-        read -r shell_choice
-        case "$shell_choice" in
-            1) DETECTED_SHELL="bash" ;;
-            2) DETECTED_SHELL="zsh" ;;
-            3) DETECTED_SHELL="fish" ;;
-            *) INSTALL_INTEGRATION=false ;;
-        esac
-    fi
+    echo "(auto-yes) Enabling shell integration for $DETECTED_SHELL"
 else
-    INSTALL_INTEGRATION=false
+    read -r install_integration || install_integration=""
+    if [[ ! $install_integration =~ ^[Nn]$ ]]; then
+        INSTALL_INTEGRATION=true
+        if [[ "$DETECTED_SHELL" != "bash" && "$DETECTED_SHELL" != "zsh" && "$DETECTED_SHELL" != "fish" ]]; then
+            echo "Choose your shell for integration:"
+            echo "1) bash"
+            echo "2) zsh  "
+            echo "3) fish"
+            echo "4) skip integration"
+            read -r shell_choice
+            case "$shell_choice" in
+                1) DETECTED_SHELL="bash" ;;
+                2) DETECTED_SHELL="zsh" ;;
+                3) DETECTED_SHELL="fish" ;;
+                *) INSTALL_INTEGRATION=false ;;
+            esac
+        fi
+    else
+        INSTALL_INTEGRATION=false
+    fi
 fi
 
 # ------------------------------------------------------------------
@@ -532,7 +637,70 @@ DOWNLOAD_URL="$BASE_URL/$ASSET_NAME"
 BIN_DIR="/usr/local/bin"
 TARGET_BIN="$BIN_DIR/aichat"
 
-# Temporary working directory
+# ------------------------------------------------------------------
+# Dry-run early summary & exit (before any side effects)
+# ------------------------------------------------------------------
+if [[ "$AICHAT_DRY_RUN" == "1" ]]; then
+    if command -v aichat >/dev/null 2>&1; then
+        CURRENT_INSTALLED_VERSION=$(aichat --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo 'unknown')
+    else
+        CURRENT_INSTALLED_VERSION=null
+    fi
+    if [[ "$AICHAT_JSON" == "1" ]]; then
+        # Restore original stdout (held on FD 3) so the JSON plan is emitted cleanly
+        if [[ -n "${AICHAT_JSON_STDOUT_REDIRECTED:-}" ]]; then
+            exec 1>&3
+        fi
+        # Emit JSON plan
+        cat <<JSON
+{
+  "mode": "dry-run",
+  "target_version": "${VERSION}",
+        "current_version": $( if [[ "$CURRENT_INSTALLED_VERSION" == null ]]; then echo null; else echo "\"$CURRENT_INSTALLED_VERSION\""; fi ),
+  "architecture": "${ARCH}",
+  "download_url": "${DOWNLOAD_URL}",
+  "binary_target": "${TARGET_BIN}",
+  "wrapper": {"planned": $( [[ "$AICHAT_NO_WRAPPER" == "1" ]] && echo false || echo true ), "skip_reason": $( [[ "$AICHAT_NO_WRAPPER" == "1" ]] && echo '"--no-wrapper set"' || echo null )},
+  "role_generator": {"planned": $( [[ "$AICHAT_SKIP_ROLE" == "1" ]] && echo false || echo true ), "skip_reason": $( [[ "$AICHAT_SKIP_ROLE" == "1" ]] && echo '"--skip-role set"' || echo null )},
+  "shell": {"detected": "${DETECTED_SHELL}", "integration_planned": true},
+  "completions": ["bash","zsh","fish"],
+  "config": {"path": "~/.config/aichat/config.yaml", "action": "create_or_augment"},
+  "backups": {"shell_rc": "on-change", "config": "on-modify"},
+  "flags": {"dry_run": true, "json": true, "no_wrapper": $( [[ "$AICHAT_NO_WRAPPER" == "1" ]] && echo true || echo false ), "skip_role": $( [[ "$AICHAT_SKIP_ROLE" == "1" ]] && echo true || echo false )}
+}
+JSON
+    else
+        echo "🧪 DRY-RUN MODE (no changes will be made)" >&2
+        if [[ "$CURRENT_INSTALLED_VERSION" == null ]]; then
+            echo "   aichat not currently installed (target: $VERSION)" >&2
+        else
+            echo "   Detected existing aichat version: $CURRENT_INSTALLED_VERSION (target: $VERSION)" >&2
+        fi
+        echo "   Architecture: $ARCH" >&2
+        echo "   Download URL: $DOWNLOAD_URL" >&2
+        echo "   Binary target: $TARGET_BIN" >&2
+        if [[ "$AICHAT_NO_WRAPPER" == "1" ]]; then
+            echo "   Wrapper: skipped (--no-wrapper)" >&2
+        else
+            echo "   Wrapper strategy: move aichat -> aichat.real + create wrapper (idempotent)" >&2
+        fi
+        if [[ "$AICHAT_SKIP_ROLE" == "1" ]]; then
+            echo "   Role generator: skipped (--skip-role)" >&2
+        else
+            echo "   Role generator: will install if scripts/gen-aichat-role present" >&2
+        fi
+        echo "   Shell detected: $DETECTED_SHELL (integration default: enabled)" >&2
+        echo "   Completions planned: bash, zsh, fish (auto in dry-run)" >&2
+        echo "   Config: will create or augment ~/.config/aichat/config.yaml (preludes role:local)" >&2
+        echo "   Backups: shell rc & config only when modified (none created in dry-run)" >&2
+        echo "   Flags: --dry-run${AICHAT_JSON:+ --json}${AICHAT_NO_WRAPPER:+ --no-wrapper}${AICHAT_SKIP_ROLE:+ --skip-role}" >&2
+        echo "   To execute for real remove --dry-run or AICHAT_DRY_RUN=1" >&2
+        echo "✅ Dry-run completed successfully (no filesystem changes)." >&2
+    fi
+    exit 0
+fi
+
+# Temporary working directory (only needed for real run)
 TMPDIR="$(mktemp -d -p /tmp aichat-install-XXXXXX)"
 
 # ------------------------------------------------------------------
@@ -612,7 +780,7 @@ elif [[ -f "$SCRIPT_DIR/scripts/gen-aichat-role" ]]; then
 else
     GEN_ROLE_SCRIPT=""
 fi
-if [[ -f "$GEN_ROLE_SCRIPT" ]]; then
+if [[ -f "$GEN_ROLE_SCRIPT" && "$AICHAT_SKIP_ROLE" != "1" ]]; then
     echo "� Installing gen-aichat-role script..."
     
     # Install gen-aichat-role to /usr/local/bin
@@ -625,7 +793,7 @@ if [[ -f "$GEN_ROLE_SCRIPT" ]]; then
     echo "✅ gen-aichat-role installed to /usr/local/bin/gen-aichat-role"
     
     # Create wrapper only if we installed the binary
-    if [[ "$SKIP_BINARY_INSTALL" == "false" && -f "$TARGET_BIN" ]]; then
+    if [[ "$SKIP_BINARY_INSTALL" == "false" && -f "$TARGET_BIN" && "$AICHAT_NO_WRAPPER" != "1" ]]; then
         echo "🔄 Creating aichat wrapper with fresh role generation..."
         
         WRAPPER_CONTENT='#!/usr/bin/env bash
@@ -661,7 +829,11 @@ exec /usr/local/bin/aichat.real "$@"
         echo "   Run manually: gen-aichat-role && aichat --role local \"query\""
     fi
 else
-    echo "⚠️  gen-aichat-role script not found in current directory, skipping"
+    if [[ "$AICHAT_SKIP_ROLE" == "1" ]]; then
+        echo "ℹ️  Skipping role generator installation (--skip-role)"
+    else
+        echo "⚠️  gen-aichat-role script not found in current directory, skipping"
+    fi
 fi
 
 # ------------------------------------------------------------------
@@ -737,11 +909,15 @@ install_completion_for_shell() {
     # Check if completion already exists
     if [[ -f "$completion_file" ]]; then
         echo "ℹ️  $shell_name completion already exists at $completion_file"
-        echo "   Do you want to overwrite it? (y/N):"
-        read -r overwrite
-        if [[ ! $overwrite =~ ^[Yy]$ ]]; then
-            echo "ℹ️  Skipping $shell_name completion"
-            return 0
+        if assume_yes; then
+            echo "   (auto-yes) Overwriting existing completion due to AICHAT_ASSUME_YES=1"
+        else
+            echo "   Do you want to overwrite it? (y/N):"
+            read -r overwrite
+            if [[ ! $overwrite =~ ^[Yy]$ ]]; then
+                echo "ℹ️  Skipping $shell_name completion"
+                return 0
+            fi
         fi
     fi
     
@@ -799,19 +975,26 @@ install_completion_for_shell() {
     return 0
 }
 
+SELECTED_COMPLETIONS=()
 # Ask user which completions to install
-echo "Which shell completions would you like to install?"
-echo "1) All shells (bash, zsh, fish)"
-echo "2) Current shell only ($DETECTED_SHELL)"
-echo "3) Choose specific shells"
-echo "4) Skip completions"
-read -r completion_choice
+if assume_yes; then
+    completion_choice=1
+    echo "(auto-yes) Installing all shell completions"
+else
+    echo "Which shell completions would you like to install?"
+    echo "1) All shells (bash, zsh, fish)"
+    echo "2) Current shell only ($DETECTED_SHELL)"
+    echo "3) Choose specific shells"
+    echo "4) Skip completions"
+    read -r completion_choice || completion_choice=4
+fi
 
 case "$completion_choice" in
     1)
         # Install all completions
         for shell in bash zsh fish; do
             install_completion_for_shell "$shell" || echo "⚠️  Failed to install $shell completion"
+            SELECTED_COMPLETIONS+=("$shell")
         done
         echo "ℹ️  All completions installed. Restart your shell to activate."
         ;;
@@ -820,6 +1003,7 @@ case "$completion_choice" in
         if [[ "$DETECTED_SHELL" =~ ^(bash|zsh|fish)$ ]]; then
             install_completion_for_shell "$DETECTED_SHELL" || echo "⚠️  Failed to install $DETECTED_SHELL completion"
             echo "ℹ️  Restart your shell or run 'source ~/.${DETECTED_SHELL}rc' to activate."
+            SELECTED_COMPLETIONS+=("$DETECTED_SHELL")
         else
             echo "⚠️  Current shell ($DETECTED_SHELL) not supported for completions"
         fi
@@ -831,9 +1015,9 @@ case "$completion_choice" in
         read -r shell_selection
         for choice in $shell_selection; do
             case "$choice" in
-                1) install_completion_for_shell "bash" ;;
-                2) install_completion_for_shell "zsh" ;;
-                3) install_completion_for_shell "fish" ;;
+                1) install_completion_for_shell "bash"; SELECTED_COMPLETIONS+=("bash") ;;
+                2) install_completion_for_shell "zsh"; SELECTED_COMPLETIONS+=("zsh") ;;
+                3) install_completion_for_shell "fish"; SELECTED_COMPLETIONS+=("fish") ;;
                 *) echo "⚠️  Invalid choice: $choice" ;;
             esac
         done
@@ -843,6 +1027,11 @@ case "$completion_choice" in
         echo "ℹ️  Skipping shell completions installation."
         ;;
 esac
+
+# If dry-run mode was requested, stop before making changes (the real changes already skipped
+# because we exit earlier; here we provide a consolidated report). To achieve true dry-run we
+# must short-circuit BEFORE any side-effecting work. Therefore we implement dry-run summary and exit
+# much earlier (after decision making but before downloads/install) by placing a guard further up.
 
 # ------------------------------------------------------------------
 # 8. Install shell integration (if requested)
@@ -863,10 +1052,21 @@ ensure_aichat_config_dirs || {
 # ------------------------------------------------------------------
 # 10. Configure local role as default (only if gen-aichat-role was installed)
 # ------------------------------------------------------------------
-if [[ -f "$GEN_ROLE_SCRIPT" ]]; then
+if [[ -f "$GEN_ROLE_SCRIPT" && "$AICHAT_SKIP_ROLE" != "1" ]]; then
     configure_local_role_default || {
         echo "⚠️  Failed to configure local role as default"
     }
+fi
+
+# ------------------------------------------------------------------
+# 10.5. Generate initial local role snapshot (non-root only)
+# ------------------------------------------------------------------
+if [[ "$AICHAT_SKIP_ROLE" != "1" && -f /usr/local/bin/gen-aichat-role && $EUID -ne 0 ]]; then
+    if /usr/local/bin/gen-aichat-role >/dev/null 2>&1; then
+        echo "🧩 Initial local role snapshot generated"
+    else
+        echo "⚠️  Unable to generate initial local role snapshot (will be refreshed on first aichat run)"
+    fi
 fi
 
 # ------------------------------------------------------------------
@@ -898,7 +1098,7 @@ if [[ "$INSTALL_INTEGRATION" == "true" ]]; then
     echo "   Shell integration: Installed for $DETECTED_SHELL"
     echo "   Usage: Press Alt+E (or Esc+E) to enhance commands with AI"
 fi
-if [[ -f "$GEN_ROLE_SCRIPT" ]]; then
+if [[ -f "$GEN_ROLE_SCRIPT" && "$AICHAT_SKIP_ROLE" != "1" ]]; then
     echo "   Local role: Configured as default for CLI and REPL"
     echo "   System awareness: All commands have local system context"
 fi

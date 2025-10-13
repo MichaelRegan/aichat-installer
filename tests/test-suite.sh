@@ -2,12 +2,27 @@
 # Comprehensive test suite for install-aichat script
 set -euo pipefail
 
+SRC_DIR="${1:-}"
+if [[ -z "$SRC_DIR" ]]; then
+    # Default to repo root (parent of this script's directory)
+    SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
+if [[ ! -d "$SRC_DIR" ]]; then
+    echo "Usage: $0 [source-directory]"; exit 1; fi
+
 TEST_DIR="/tmp/aichat-test-$$"
 mkdir -p "$TEST_DIR"
 cd "$TEST_DIR"
 
-# Copy test files
-cp "$1"/* . 2>/dev/null || { echo "Usage: $0 <source-directory>"; exit 1; }
+echo "📁 Source directory: $SRC_DIR"
+
+# Copy core assets needed by the suite
+cp "$SRC_DIR/install-aichat" ./ 2>/dev/null || true
+cp "$SRC_DIR/scripts/gen-aichat-role" ./ 2>/dev/null || true
+
+# Also copy dry-run related tests if they exist (for invocation later)
+cp "$SRC_DIR/tests/test-dry-run.sh" ./ 2>/dev/null || true
+cp "$SRC_DIR/tests/test-dry-run-schema.sh" ./ 2>/dev/null || true
 
 echo "🧪 Running comprehensive aichat installation tests..."
 echo "Test directory: $TEST_DIR"
@@ -15,7 +30,11 @@ echo "Test directory: $TEST_DIR"
 # Test 1: Syntax validation
 echo ""
 echo "1️⃣ Testing script syntax..."
-bash -n ./install-aichat && echo "✅ Syntax check passed" || echo "❌ Syntax check failed"
+if [[ -f ./install-aichat ]]; then
+    bash -n ./install-aichat && echo "✅ Syntax check passed" || echo "❌ Syntax check failed"
+else
+    echo "⚠️  install-aichat not present; skipping syntax check"
+fi
 
 # Test 2: Version validation
 echo ""
@@ -117,7 +136,7 @@ rm -f test_dirs.sh
 # Test 6: Config file creation
 echo ""
 echo "6️⃣ Testing config file creation..."
-if [[ -f "./gen-aichat-role" ]]; then
+if [[ -f "./gen-aichat-role" && -f ./install-aichat ]]; then
     HOME="$TEST_DIR" bash -c "
         source ./install-aichat
         configure_local_role_default
@@ -129,7 +148,7 @@ if [[ -f "./gen-aichat-role" ]]; then
         sed 's/^/      /' "$TEST_CONFIG_DIR/config.yaml"
     fi
 else
-    echo "⚠️  gen-aichat-role script not found, skipping config test"
+    echo "⚠️  gen-aichat-role or install-aichat missing, skipping config test"
 fi
 
 # Test 7: Completion file validation
@@ -174,7 +193,21 @@ for asset in "${ASSETS[@]}"; do
     fi
 done
 
-# Cleanup
+# Test 10: Dry-run text & JSON tests (if available)
+echo ""
+echo "🔟 Dry-run feature tests..."
+if [[ -f ./test-dry-run.sh ]]; then
+    bash ./test-dry-run.sh || echo "❌ test-dry-run.sh failed"
+else
+    echo "ℹ️  test-dry-run.sh not found, skipping"
+fi
+if [[ -f ./test-dry-run-schema.sh ]]; then
+    bash ./test-dry-run-schema.sh || echo "❌ test-dry-run-schema.sh failed"
+else
+    echo "ℹ️  test-dry-run-schema.sh not found, skipping"
+fi
+
+# Summary & cleanup
 echo ""
 echo "🧹 Cleaning up test directory..."
 cd /

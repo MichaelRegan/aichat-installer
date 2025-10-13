@@ -62,6 +62,78 @@ curl -fsSL https://raw.githubusercontent.com/MichaelRegan/aichat-installer/main/
 
 > **Warning:** The automated method will fail if it encounters a prompt that requires user input (e.g., if aichat is already installed). For true automation, you may need to add flags to the script to pre-approve all actions.
 
+### 🔍 Dry-Run Mode (Plan Changes Without Writing)
+
+Use dry-run to preview exactly what the installer *would* do—no files are modified, no downloads performed:
+
+```bash
+./install-aichat --dry-run                 # or -n (human friendly summary)
+./install-aichat --dry-run --json          # machine readable JSON plan (stdout = ONLY the JSON)
+AICHAT_DRY_RUN=1 ./install-aichat          # environment alternative
+AICHAT_DRY_RUN=1 AICHAT_JSON=1 ./install-aichat  # env-based JSON plan
+```
+
+Dry-run output includes:
+- Target version & currently installed version (if any)
+- Architecture & download URL
+- Whether wrapper & role generator would be installed
+- Planned shell integration & completions
+- Whether config.yaml would be created or augmented
+- Backup policy summary
+
+Use this in CI to validate planned operations or during audits.
+
+#### JSON Plan Output
+
+When you add `--json` to a dry-run, the script prints a single JSON object to **stdout** and sends all progress / status lines to **stderr**. This makes parsing reliable:
+
+```jsonc
+{
+    "mode": "dry-run",
+    "target_version": "0.30.0",
+    "current_version": "0.29.0",
+    "architecture": "linux-x86_64",
+    "download_url": "https://github.com/sigoden/aichat/releases/download/v0.30.0/aichat-v0.30.0-x86_64-unknown-linux-musl.tar.gz",
+    "binary_target": "/usr/local/bin/aichat",
+    "wrapper": {"planned": true, "skip_reason": null},
+    "role_generator": {"planned": true, "skip_reason": null},
+    "shell": {"detected": "zsh", "integration_planned": true},
+    "completions": ["bash","zsh","fish"],
+    "config": {"path": "~/.config/aichat/config.yaml", "action": "create_or_augment"},
+    "backups": {"shell_rc": "on-change", "config": "on-modify"},
+    "flags": {"dry_run": true, "json": true, "no_wrapper": false, "skip_role": false}
+}
+```
+
+Quick extraction examples:
+```bash
+plan=$(./install-aichat --dry-run --json latest 2>/dev/null)
+echo "$plan" | jq '.download_url'
+```
+
+### Minimal / Selective Installation Flags
+
+These flags let you tailor what the installer sets up:
+
+| Flag | Env Var | Effect |
+|------|---------|--------|
+| `--no-wrapper` | `AICHAT_NO_WRAPPER=1` | Do not rename the binary to `aichat.real` or create the auto-refresh wrapper. The installed file remains `/usr/local/bin/aichat`. |
+| `--skip-role` | `AICHAT_SKIP_ROLE=1` | Skip installing `gen-aichat-role` and skip configuring the local system context role. |
+| `--dry-run` / `-n` | `AICHAT_DRY_RUN=1` | Plan-only mode; no filesystem changes (can combine with `--json`). |
+| `--json` (with dry-run) | `AICHAT_JSON=1` | Emit machine-readable plan JSON to stdout (suppresses chatter on stdout). |
+
+Combine for a minimal preview:
+```bash
+./install-aichat --dry-run --json --no-wrapper --skip-role latest
+```
+
+Or for a minimal real installation (binary only):
+```bash
+./install-aichat --no-wrapper --skip-role latest
+```
+
+> Tip: In CI you can assert policy decisions (e.g. wrapper required) by inspecting the JSON plan before allowing a real install to proceed.
+
 ## 📋 Installation Options
 
 The script will guide you through several configuration options:
@@ -371,3 +443,49 @@ See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for detailed information.
 **Made with ❤️ for the aichat community**
 
 *Transform your command line experience with AI-powered assistance!*
+
+---
+
+## ♻️ Idempotent Re-run & Backup Behavior
+
+The installer is designed to be safely re-runnable. A second (or subsequent) run will refresh binaries, wrapper scripts, completions, and shell integration without duplicating blocks or destroying user edits.
+
+### What Happens on Re-run
+| Component | Behavior |
+|-----------|----------|
+| `aichat` binary | Re-downloaded and reinstalled (overwrites in place) |
+| `gen-aichat-role` | Reinstalled (timestamp advances) |
+| Wrapper (`/usr/local/bin/aichat`) | Re-created to ensure latest role-generation logic |
+| Completions | Reinstalled for selected shells (overwrites silently when `AICHAT_ASSUME_YES=1`) |
+| Shell integration block | Replaced (not duplicated). Existing block is detected; when auto-approved it's refreshed and a backup of the shell rc file is taken |
+| Config file (`config.yaml`) | Left untouched if already “complete” (so no noise). Only backed up when the installer needs to modify or create it |
+
+### Backup Rules
+- **Shell configuration backups**: A backup is created every time the integration block is reinstalled (e.g. `~/.zshrc.backup.<epoch>`). This guarantees you can diff or restore prior state.
+- **Config file backups**: Created only when the installer adds or augments `~/.config/aichat/config.yaml` (e.g. adding missing prelude settings). If the existing config already contains the expected settings, no backup is created to avoid clutter.
+- **Naming pattern**: `<original>.backup.<unix_epoch>` (monotonic & sortable).
+
+### Verifying Idempotency
+You can manually validate after a re-run:
+```bash
+ls -1 ~/.zshrc.backup.*        # At least one after second run
+grep -c "# aichat shell integration" ~/.zshrc   # Should be exactly 1
+stat -c %Y /usr/local/bin/gen-aichat-role        # Timestamp increases after re-run
+grep aichat.real /usr/local/bin/aichat           # Wrapper still references real binary
+```
+
+### Non-interactive Automation
+Set `AICHAT_ASSUME_YES=1` to auto-approve prompts (used in CI / scripted installs):
+```bash
+AICHAT_ASSUME_YES=1 ./install-aichat latest
+```
+This replaces fragile `yes |` style piping and avoids SIGPIPE (exit 141) under `set -o pipefail`.
+
+### When to Manually Diff
+If you maintain a custom `config.yaml`, consider putting customizations below a comment marker (e.g. `# --- custom overrides ---`). The installer never removes user-defined keys; it only adds missing defaults when first creating the file.
+
+### Future Enhancements (Planned)
+- Optional flag to force creation of a config backup even when unchanged (for strict auditing environments).
+- Dry-run mode for CI validation without performing writes.
+
+---

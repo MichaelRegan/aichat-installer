@@ -23,16 +23,36 @@ user="${USER:-$(id -un)}"
 shell="${SHELL:-zsh}"
 distro="$(grep -Po '(?<=^PRETTY_NAME=).+' /etc/os-release | tr -d '"' 2>/dev/null || echo 'unknown')"
 loadavg="$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null || uptime | sed 's/.*load average: //')"
-mem="$(free -h 2>/dev/null | awk '/^Mem:/ {printf "%s/%s used\n",$3,$2}')"
+# Memory usage (guard against missing 'free')
+if command -v free >/dev/null 2>&1; then
+  mem="$(free -h 2>/dev/null | awk '/^Mem:/ {printf "%s/%s used\n",$3,$2}')"
+else
+  # Fallback: parse /proc/meminfo (values in kB)
+  mem_total_kb="$(grep -i '^MemTotal:' /proc/meminfo 2>/dev/null | awk '{print $2}')"
+  mem_avail_kb="$(grep -i '^MemAvailable:' /proc/meminfo 2>/dev/null | awk '{print $2}')"
+  if [ -n "${mem_total_kb}" ] && [ -n "${mem_avail_kb}" ]; then
+    mem_used_kb=$((mem_total_kb - mem_avail_kb))
+    # Convert to human-readable MiB
+    mem="$(printf '%dMiB/%dMiB used\n' $((mem_used_kb/1024)) $((mem_total_kb/1024)))"
+  else
+    mem="unknown"
+  fi
+fi
 now="$(date -Is)"
 
 # --- networking
-ipv4="$(ip -o -4 addr show scope global up 2>/dev/null | awk '{print $2":"$4}' | paste -sd ', ' -)"
-ipv6="$(ip -o -6 addr show scope global up 2>/dev/null | awk '{print $2":"$4}' | sed 's/%[^ ]*//g' | paste -sd ', ' -)"
-default_iface="$(ip route 2>/dev/null | awk '/default/ {print $5; exit}')"
+if command -v ip >/dev/null 2>&1; then
+  ipv4="$(ip -o -4 addr show scope global up 2>/dev/null | awk '{print $2":"$4}' | paste -sd ', ' -)"
+  ipv6="$(ip -o -6 addr show scope global up 2>/dev/null | awk '{print $2":"$4}' | sed 's/%[^ ]*//g' | paste -sd ', ' -)"
+  default_iface="$(ip route 2>/dev/null | awk '/default/ {print $5; exit}')"
+else
+  ipv4="none"
+  ipv6="none"
+  default_iface="unknown"
+fi
 
 # --- platform / virtualization detection
-virt_kind="$(systemd-detect-virt 2>/dev/null || echo unknown)"
+virt_kind="$( (command -v systemd-detect-virt >/dev/null 2>&1 && systemd-detect-virt 2>/dev/null) || echo unknown)"
 dmi_vendor="$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)"
 dmi_product="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
 dmi_bios_vendor="$(cat /sys/class/dmi/id/bios_vendor 2>/dev/null || true)"
@@ -127,7 +147,7 @@ git_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'none')"
 cwd="$(pwd 2>/dev/null || echo "$HOME")"
 
 # --- disk snapshot (top 5 rows, skip tmpfs)
-disks="$(df -hT -x tmpfs -x devtmpfs 2>/dev/null | head -n 6)"
+disks="$( (command -v df >/dev/null 2>&1 && df -hT -x tmpfs -x devtmpfs 2>/dev/null | head -n 6) || echo 'unavailable')"
 
 # --- time/locale
 tz="$( (timedatectl show -p Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null) || echo 'unknown' )"
@@ -161,7 +181,7 @@ Driver: ${drv:-unknown}
 VRAM: ${vram:-unknown}"
 else
   # Generic fallback (Intel/others show here too)
-  lsout="$(lspci -nn 2>/dev/null | grep -iE 'vga|3d|display' || true)"
+  lsout="$( (command -v lspci >/dev/null 2>&1 && lspci -nn 2>/dev/null | grep -iE 'vga|3d|display') || true)"
   if [ -n "$lsout" ]; then
     gpu_section="From lspci:
 $(echo "$lsout" | sed 's/^/- /')"
